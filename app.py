@@ -110,7 +110,6 @@ with col_up2:
 if file_rev is not None and file_avail is not None:
     try:
         with st.spinner("Mengekstrak dan menggabungkan data..."):
-            
             if file_rev.name.endswith('.csv'):
                 df_rev = pd.read_csv(file_rev)
             else:
@@ -168,13 +167,11 @@ if file_rev is not None and file_avail is not None:
         with col_f1:
             all_sites = sorted(df_merged['Site_ID'].dropna().unique().tolist())
             dropdown_options = ["-- Pilih Site --"] + [f"{site} - {name_mapping.get(site, 'Unknown')}" for site in all_sites]
-            search_site_selection = st.selectbox("🔍 Cari & Pilih Site ID:", options=dropdown_options)
+            search_site_selection = st.selectbox("🔍 Cari & Pilih Site Induk:", options=dropdown_options)
             
         with col_f2:
             min_date = df_merged['Date'].min()
             max_date = df_merged['Date'].max()
-            
-            # Ini nih baris yang tadi bikin error kalau kurungnya kehapus
             selected_dates = st.date_input(
                 "📅 Pilih Periode Tanggal (Rentang):", 
                 value=(min_date, max_date), 
@@ -191,13 +188,33 @@ if file_rev is not None and file_avail is not None:
                 start_date = end_date = selected_dates[0]
                 
             df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)]
+            
+            # Panggil fungsi kalkulasi untuk dapet semua data (Parent + Anakannya)
             impact_df = calculate_loss(df_periode, search_site, site_mapping)
             
             if impact_df.empty:
                 st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
             else:
-                st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                # --- TAMBAHAN FITUR: PILIH SPESIFIK SITE ANAKAN / ALL ---
+                st.write("---")
+                list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
+                opsi_fokus = ["Semua (Induk & Anakan)"] + [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
                 
+                fokus_site_selection = st.radio(
+                    "🎯 Pilih Fokus Tampilan Data:", 
+                    options=opsi_fokus, 
+                    horizontal=True
+                )
+                
+                # Filter ulang dataframe kalau milih spesifik 1 site aja
+                if fokus_site_selection != "Semua (Induk & Anakan)":
+                    site_fokus_id = fokus_site_selection.split(" - ")[0]
+                    impact_df = impact_df[impact_df['Site_ID'] == site_fokus_id]
+                    st.write(f"### 📈 Ringkasan Performa: {fokus_site_selection} ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                else:
+                    st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Seluruh Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                
+                # --- KALKULASI METRIK ---
                 tot_act_rev = impact_df['Actual_Revenue'].sum()
                 tot_pot_rev = impact_df['Potential_Revenue'].sum()
                 tot_lost_rev = impact_df['Lost_Revenue'].sum()
@@ -212,6 +229,7 @@ if file_rev is not None and file_avail is not None:
                 pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
                 pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
                 
+                # --- RENDER KARTU METRIK ---
                 st.write("##### 💰 Analisis Revenue")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
@@ -220,9 +238,10 @@ if file_rev is not None and file_avail is not None:
                 
                 st.write("##### 📦 Analisis Payload")
                 c4, c5, c6 = st.columns(3)
-                c4.metric("Traffic Aktual", f"{tot_act_pay:,.2f} GB")
-                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB", f"{pct_lost_pay:,.2f}% Loss")
+                # FORMAT PAYLOAD UBAH JADI ,.0f (Tanpa desimal)
+                c4.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
+                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
+                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", f"{pct_lost_pay:,.2f}% Loss")
                 
                 st.divider()
                 
@@ -257,9 +276,10 @@ if file_rev is not None and file_avail is not None:
                 with tab2:
                     st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
                 with tab3:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.2f} GB'), use_container_width=True)
+                    # Payload format tooltip juga .0f
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.0f} GB'), use_container_width=True)
                 with tab4:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.2f} GB'), use_container_width=True)
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.0f} GB'), use_container_width=True)
                 with tab5:
                     st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
                 with tab6:
@@ -275,68 +295,77 @@ if file_rev is not None and file_avail is not None:
                     'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
                 ]
                 
-                # FUNGSI KUSTOM: Availability (< 0.99 Kuning -> Maroon)
+                # FUNGSI KUSTOM: Hitung RGB gradient Soft Red (255,153,153) ke Maroon (128,0,0)
+                def get_red_maroon_style(ratio):
+                    ratio = max(0, min(1, ratio)) # pastiin ratio di rentang 0 sampai 1
+                    r = int(255 - (255 - 128) * ratio)
+                    g = int(153 - (153 - 0) * ratio)
+                    b = int(153 - (153 - 0) * ratio)
+                    bg_color = f'#{r:02x}{g:02x}{b:02x}'
+                    
+                    # Hitung kecerahan untuk warna teks putih / hitam otomatis
+                    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                    txt_color = 'white' if lum < 0.5 else 'black'
+                    return f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;'
+
+                # FUNGSI KUSTOM: Availability (< 0.99)
                 def color_availability(s):
                     styles = []
                     min_val = s.min()
                     for val in s:
                         if pd.isna(val):
                             styles.append('')
-                            continue
-                        if val >= 0.99:
+                        elif val >= 0.99:
                             styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
                         else:
-                            ratio = (val - min_val) / (0.99 - min_val) if min_val < 0.99 else 1.0
-                            ratio = max(0, min(1, ratio))
-                            
-                            r = int(128 + (255 - 128) * ratio)
-                            g = int(0 + (255 - 0) * ratio)
-                            bg_color = f'#{r:02x}{g:02x}00'
-                            
-                            lum = (0.299 * r + 0.587 * g) / 255
-                            txt_color = 'white' if lum < 0.5 else 'black'
-                            styles.append(f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;')
+                            ratio = (val - 0.99) / (min_val - 0.99) if min_val < 0.99 else 0
+                            styles.append(get_red_maroon_style(ratio))
                     return styles
 
-                # FUNGSI KUSTOM: Loss (< 0 Kuning -> Maroon)
+                # FUNGSI KUSTOM: Loss (< 0)
                 def color_loss(s):
                     styles = []
                     min_val = s.min()
                     for val in s:
                         if pd.isna(val):
                             styles.append('')
-                            continue
-                        if val >= 0:
+                        elif val >= 0:
                             styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
                         else:
-                            ratio = (val - min_val) / (0 - min_val) if min_val < 0 else 1.0
-                            ratio = max(0, min(1, ratio))
-                            
-                            r = int(128 + (255 - 128) * ratio)
-                            g = int(0 + (255 - 0) * ratio)
-                            bg_color = f'#{r:02x}{g:02x}00'
-                            
-                            lum = (0.299 * r + 0.587 * g) / 255
-                            txt_color = 'white' if lum < 0.5 else 'black'
-                            styles.append(f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;')
+                            ratio = (val - 0) / (min_val - 0) if min_val < 0 else 0
+                            styles.append(get_red_maroon_style(ratio))
+                    return styles
+
+                # FUNGSI KUSTOM: Packet Loss (> 0.01)
+                def color_packet_loss(s):
+                    styles = []
+                    max_val = s.max()
+                    for val in s:
+                        if pd.isna(val):
+                            styles.append('')
+                        elif val <= 0.01:
+                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                        else:
+                            ratio = (val - 0.01) / (max_val - 0.01) if max_val > 0.01 else 0
+                            styles.append(get_red_maroon_style(ratio))
                     return styles
                 
-                # Penerapan Formatting ke Tabel
+                # Penerapan Formatting ke Tabel (Payload Format juga disesuaikan ke .0f)
                 styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
                     'Availability': '{:.2%}',
                     'Packet_Loss': '{:.2%}',
                     'Actual_Revenue': 'Rp {:,.0f}',
                     'Potential_Revenue': 'Rp {:,.0f}',
                     'Lost_Revenue': 'Rp {:,.0f}',
-                    'Actual_Payload': '{:,.2f} GB',
-                    'Potential_Payload': '{:,.2f} GB',
-                    'Lost_Payload': '{:,.2f} GB'
+                    'Actual_Payload': '{:,.0f} GB',
+                    'Potential_Payload': '{:,.0f} GB',
+                    'Lost_Payload': '{:,.0f} GB'
                 }).apply(
                     color_availability, subset=['Availability']
                 ).apply(
+                    color_packet_loss, subset=['Packet_Loss']
+                ).apply(
                     color_loss, subset=['Lost_Revenue', 'Lost_Payload']
-                ).background_gradient(
-                    cmap='RdYlGn_r', subset=['Packet_Loss']
                 ).background_gradient(
                     cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload']
                 )
