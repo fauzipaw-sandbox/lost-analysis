@@ -42,11 +42,33 @@ with col_up2:
 if file_rev is not None and file_avail is not None:
     try:
         with st.spinner("Mengekstrak dan menggabungkan data..."):
-            # Load Data
-            df_rev = pd.read_csv(file_rev) if file_rev.name.endswith('.csv') else pd.read_excel(file_rev)
-            df_avail = pd.read_csv(file_avail) if file_avail.name.endswith('.csv') else pd.read_excel(file_avail)
             
-            # === PREPROCESSING REVENUE ===
+            # === 1. LOAD DATA REVENUE ===
+            if file_rev.name.endswith('.csv'):
+                df_rev = pd.read_csv(file_rev)
+            else:
+                df_rev = pd.read_excel(file_rev)
+            df_rev.columns = df_rev.columns.str.strip() # Bersihin spasi nyempil di nama kolom
+            
+            # === 2. LOAD DATA AVAILABILITY (DENGAN AUTO-DETECT SHEET) ===
+            if file_avail.name.endswith('.csv'):
+                df_avail = pd.read_csv(file_avail)
+            else:
+                xls_avail = pd.ExcelFile(file_avail)
+                sheet_target = xls_avail.sheet_names[0] # Default sheet pertama
+                
+                # Looping nyari sheet mana yang punya kolom 'Begin Time'
+                for sheet in xls_avail.sheet_names:
+                    df_cek = pd.read_excel(xls_avail, sheet_name=sheet, nrows=1)
+                    if any('Begin Time' in col for col in df_cek.columns):
+                        sheet_target = sheet
+                        break
+                        
+                df_avail = pd.read_excel(xls_avail, sheet_name=sheet_target)
+                
+            df_avail.columns = df_avail.columns.str.strip() # Bersihin spasi
+            
+            # === 3. PREPROCESSING REVENUE ===
             df_rev['Date'] = pd.to_datetime(df_rev['date'], format='mixed').dt.strftime('%Y-%m-%d')
             df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.upper()
             
@@ -58,13 +80,13 @@ if file_rev is not None and file_avail is not None:
             df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
             df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0)
             
-            # === PREPROCESSING AVAILABILITY ===
+            # === 4. PREPROCESSING AVAILABILITY ===
             df_avail['Date'] = pd.to_datetime(df_avail['Begin Time'], format='mixed').dt.strftime('%Y-%m-%d')
             
-            # Trik Regex: Ngambil 3 huruf & 3 angka (misal KKP027) dari nama Managed Element
+            # Ngambil 3 huruf & 3 angka (misal KKP326) dari nama Managed Element
             df_avail['Site_ID'] = df_avail['Managed Element'].astype(str).str.extract(r'([A-Z]{3}\d{3})')
             
-            # Nyapu semua kolom yang ada kata 'Availability' buat antisipasi kolom ganda/kosong
+            # Nyapu semua kolom yang ada kata 'Availability'
             avail_cols = [c for c in df_avail.columns if 'Availability' in c]
             df_avail[avail_cols] = df_avail[avail_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Availability'] = df_avail[avail_cols].bfill(axis=1).iloc[:, 0].fillna(1.0)
@@ -74,7 +96,7 @@ if file_rev is not None and file_avail is not None:
             df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
 
-            # === MERGE (JOIN) KEDUA DATA BERDASARKAN SITE & TANGGAL ===
+            # === 5. MERGE (JOIN) KEDUA DATA BERDASARKAN SITE & TANGGAL ===
             df_merged = pd.merge(
                 df_rev, 
                 df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']].drop_duplicates(subset=['Site_ID', 'Date']), 
@@ -82,7 +104,6 @@ if file_rev is not None and file_avail is not None:
                 how='left'
             )
             
-            # Karena di contoh file belum ada kolom site anakan, kita pasang default kosong biar aman
             if 'Child_Sites' not in df_merged.columns:
                 df_merged['Child_Sites'] = ''
 
