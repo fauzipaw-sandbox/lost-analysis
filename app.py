@@ -4,6 +4,52 @@ import plotly.express as px
 
 st.set_page_config(page_title="Network Loss Impact", layout="wide")
 
+# --- INJEKSI KUSTOM CSS TEMA TELKOMSEL ---
+st.markdown("""
+<style>
+    /* Bikin garis atas merah khas Telkomsel */
+    .stApp > header {
+        background-color: transparent;
+        border-top: 5px solid #EC2028;
+    }
+    
+    /* Styling Metric Cards biar modern ada shadow & border merah */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border-left: 5px solid #EC2028;
+        padding: 15px 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+        transition: transform 0.2s ease-in-out;
+    }
+    
+    /* Efek hover pada metric cards (responsif) */
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2);
+    }
+    
+    /* Warna teks angka metrik jadi merah */
+    [data-testid="stMetricValue"] {
+        color: #EC2028;
+        font-weight: 800;
+    }
+    
+    /* Custom kotak Drag & Drop biar lebih jelas */
+    [data-testid="stFileUploadDropzone"] {
+        border: 2px dashed #EC2028;
+        border-radius: 10px;
+        background-color: #FCF4F4;
+    }
+    
+    /* Tombol-tombol Streamlit jadi lebih melengkung */
+    .stButton > button {
+        border-radius: 20px;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("💸 Network Loss Impact Dashboard")
 st.write("Pantau *lost payload*, *revenue*, dan trend berdasarkan *availability* secara periodik.")
 
