@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+import os
 
 st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 
@@ -93,10 +94,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- HEADER DENGAN LOGO TELKOMSEL (Pakai Tag HTML biar anti-error) ---
+# --- HEADER DENGAN LOGO TELKOMSEL LOKAL ---
 col_logo, col_title = st.columns([1, 15])
 with col_logo:
-    st.markdown('<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Telkomsel_2021_icon.svg/512px-Telkomsel_2021_icon.svg.png" width="60" style="margin-top: 5px;">', unsafe_allow_html=True)
+    # Cek apakah file logo.png ada di folder. Kalau ada, nampilin.
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=60)
+    else:
+        # Placeholder kalau logo belum di-upload
+        st.markdown("<h1 style='margin-top: -15px; color: #EC2028;'>🔴</h1>", unsafe_allow_html=True)
 with col_title:
     st.markdown("<h1 style='margin-top: -15px;'>💸📉 Network Loss Impact Analyzer</h1>", unsafe_allow_html=True)
 
@@ -243,7 +249,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
             if not df_dapot.empty:
                 df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['Site ID'])]
             
-        # --- REVISI PESAN SUCCESS ---
         st.success("✅ Data berhasil digabungkan!")
         
         st.divider()
@@ -496,16 +501,18 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                                 styles.append(get_red_maroon_style(ratio))
                         return styles
 
+                    # --- FIX LOGIC PACKET LOSS ---
                     def color_packet_loss(s):
                         styles = []
                         max_val = s.max()
                         for val in s:
                             if pd.isna(val) or isinstance(val, str):
                                 styles.append('')
-                            elif val <= 0.01:
+                            elif val < 0.001: # Kalau kurang dari 0.1% (aman) -> warna hijau
                                 styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
                             else:
-                                ratio = (val - 0.01) / (max_val - 0.01) if max_val > 0.01 else 0
+                                # Mulai dari 0.1% ke atas langsung transisi ke merah/maroon
+                                ratio = (val - 0.001) / (max_val - 0.001) if max_val > 0.001 else 0
                                 styles.append(get_red_maroon_style(ratio))
                         return styles
                     
