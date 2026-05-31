@@ -4,7 +4,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="Network Loss Impact", layout="wide")
 
-# --- INJEKSI KUSTOM CSS TEMA TELKOMSEL & HIJAU POTENSI ---
+# --- INJEKSI KUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp > header {
@@ -13,7 +13,6 @@ st.markdown("""
     }
     [data-testid="stMetric"] {
         background-color: #ffffff;
-        border-left: 5px solid #EC2028;
         padding: 15px 20px;
         border-radius: 10px;
         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
@@ -21,21 +20,41 @@ st.markdown("""
     }
     [data-testid="stMetric"]:hover {
         transform: translateY(-5px);
-        box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2);
     }
-    [data-testid="stMetricValue"] {
-        color: #EC2028;
-        font-weight: 800;
+    
+    /* KOLOM 1: AKTUAL (BIRU) */
+    [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"] {
+        border-left: 5px solid #0056b3 !important;
     }
+    [data-testid="column"]:nth-of-type(1) [data-testid="stMetricValue"] {
+        color: #0056b3 !important;
+    }
+    [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"]:hover {
+        box-shadow: 0 6px 15px rgba(0, 86, 179, 0.2) !important;
+    }
+    
+    /* KOLOM 2: POTENSI GAIN (HIJAU) */
     [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"] {
         border-left: 5px solid #28a745 !important;
-    }
-    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
     }
     [data-testid="column"]:nth-of-type(2) [data-testid="stMetricValue"] {
         color: #28a745 !important;
     }
+    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]:hover {
+        box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
+    }
+    
+    /* KOLOM 3: LOST (MERAH) */
+    [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"] {
+        border-left: 5px solid #EC2028 !important;
+    }
+    [data-testid="column"]:nth-of-type(3) [data-testid="stMetricValue"] {
+        color: #EC2028 !important;
+    }
+    [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"]:hover {
+        box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2) !important;
+    }
+    
     [data-testid="stFileUploadDropzone"] {
         border: 2px dashed #EC2028;
         border-radius: 10px;
@@ -46,13 +65,12 @@ st.markdown("""
 
 st.title("💸 Network Loss Impact Dashboard")
 
-# --- REVISI TEKS & TAMBAHAN HYPERLINK ---
 st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan Availability Network.")
 st.markdown("""
 <div style='background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 3px solid #0056b3;'>
     ℹ️ <b>Sumber Data:</b><br>
-    Untuk data "Revenue & Payload" ambil <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=K0OO8x" target="_blank">disini</a> <br>
-    Untuk data "Availability & Packet loss" ambil <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=MrwZgO" target="_blank">disini</a>
+    Untuk data "Revenue & Payload" ambil disini: <a href="MASUKIN_LINK_URL_NDM_ASLINYA_DISINI" target="_blank">Payload Traffic Revenue NDM</a> <br>
+    Untuk data "Availability & Packet loss" ambil disini: <a href="MASUKIN_LINK_URL_UME_ASLINYA_DISINI" target="_blank">Payload Traffic Revenue UME</a>
 </div>
 """, unsafe_allow_html=True)
 
@@ -204,168 +222,171 @@ if file_rev is not None and file_avail is not None:
                 st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
             else:
                 st.write("---")
+                
+                # --- FITUR MULTIPLE SELECT UNTUK SITE TERLIBAT ---
                 list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
-                opsi_fokus = ["Semua (Induk & Anakan)"] + [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
+                opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
                 
-                fokus_site_selection = st.radio(
-                    "🎯 Pilih Fokus Tampilan Data:", 
+                fokus_site_selection = st.multiselect(
+                    "🎯 Pilih Spesifik Site (Bisa lebih dari satu):", 
                     options=opsi_fokus, 
-                    horizontal=True
+                    default=opsi_fokus
                 )
                 
-                if fokus_site_selection != "Semua (Induk & Anakan)":
-                    site_fokus_id = fokus_site_selection.split(" - ")[0]
-                    impact_df = impact_df[impact_df['Site_ID'] == site_fokus_id]
-                    st.write(f"### 📈 Ringkasan Performa: {fokus_site_selection} ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                if not fokus_site_selection:
+                    st.info("⚠️ Silakan pilih minimal satu site dari kotak di atas untuk melihat hasilnya.")
                 else:
-                    st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Seluruh Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
-                
-                tot_act_rev = impact_df['Actual_Revenue'].sum()
-                tot_pot_rev = impact_df['Potential_Revenue'].sum()
-                tot_lost_rev = impact_df['Lost_Revenue'].sum()
-                
-                tot_act_pay = impact_df['Actual_Payload'].sum()
-                tot_pot_pay = impact_df['Potential_Payload'].sum()
-                tot_lost_pay = impact_df['Lost_Payload'].sum()
-                
-                pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
-                pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
-                
-                pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
-                pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
-                
-                st.write("##### 💰 Analisis Revenue")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
-                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
-                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
-                
-                st.write("##### 📦 Analisis Payload")
-                c4, c5, c6 = st.columns(3)
-                c4.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
-                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", f"{pct_lost_pay:,.2f}% Loss")
-                
-                st.divider()
-                
-                st.write("### 📊 Trend Grafik Harian")
-                
-                trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
-                    'Actual_Revenue': 'sum',
-                    'Potential_Revenue': 'sum',
-                    'Lost_Revenue': 'sum',
-                    'Actual_Payload': 'sum',
-                    'Potential_Payload': 'sum',
-                    'Lost_Payload': 'sum',
-                    'Availability_Pct': 'mean',
-                    'Packet_Loss_Pct': 'mean'
-                }).reset_index()
-                
-                trend_df['Date_Str'] = trend_df['Date'].astype(str)
-                
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                    "Gain Rev (Potensi)", "Lost Rev", 
-                    "Gain Payload (Potensi)", "Lost Payload", 
-                    "Availability", "Packet Loss"
-                ])
-                
-                def buat_grafik(df, x_col, y_col, format_tooltip):
-                    fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
-                    fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
-                    return fig
-
-                with tab1:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
-                with tab2:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
-                with tab3:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.0f} GB'), use_container_width=True)
-                with tab4:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.0f} GB'), use_container_width=True)
-                with tab5:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
-                with tab6:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
-
-                st.divider()
-                
-                st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
-                display_cols = [
-                    'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
-                    'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
-                    'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
-                ]
-                
-                def get_red_maroon_style(ratio):
-                    ratio = max(0, min(1, ratio)) 
-                    r = int(255 - (255 - 128) * ratio)
-                    g = int(153 - (153 - 0) * ratio)
-                    b = int(153 - (153 - 0) * ratio)
-                    bg_color = f'#{r:02x}{g:02x}{b:02x}'
+                    site_fokus_ids = [s.split(" - ")[0] for s in fokus_site_selection]
+                    impact_df = impact_df[impact_df['Site_ID'].isin(site_fokus_ids)]
                     
-                    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-                    txt_color = 'white' if lum < 0.5 else 'black'
-                    return f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;'
+                    st.write(f"### 📈 Ringkasan Performa ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                    
+                    tot_act_rev = impact_df['Actual_Revenue'].sum()
+                    tot_pot_rev = impact_df['Potential_Revenue'].sum()
+                    tot_lost_rev = impact_df['Lost_Revenue'].sum()
+                    
+                    tot_act_pay = impact_df['Actual_Payload'].sum()
+                    tot_pot_pay = impact_df['Potential_Payload'].sum()
+                    tot_lost_pay = impact_df['Lost_Payload'].sum()
+                    
+                    pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
+                    pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
+                    
+                    pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
+                    pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
+                    
+                    st.write("##### 💰 Analisis Revenue")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
+                    c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
+                    c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
+                    
+                    st.write("##### 📦 Analisis Payload")
+                    c4, c5, c6 = st.columns(3)
+                    c4.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
+                    c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
+                    c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", f"{pct_lost_pay:,.2f}% Loss")
+                    
+                    st.divider()
+                    
+                    st.write("### 📊 Trend Grafik Harian")
+                    
+                    trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
+                        'Actual_Revenue': 'sum',
+                        'Potential_Revenue': 'sum',
+                        'Lost_Revenue': 'sum',
+                        'Actual_Payload': 'sum',
+                        'Potential_Payload': 'sum',
+                        'Lost_Payload': 'sum',
+                        'Availability_Pct': 'mean',
+                        'Packet_Loss_Pct': 'mean'
+                    }).reset_index()
+                    
+                    trend_df['Date_Str'] = trend_df['Date'].astype(str)
+                    
+                    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                        "Gain Rev (Potensi)", "Lost Rev", 
+                        "Gain Payload (Potensi)", "Lost Payload", 
+                        "Availability", "Packet Loss"
+                    ])
+                    
+                    def buat_grafik(df, x_col, y_col, format_tooltip):
+                        fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
+                        fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
+                        return fig
 
-                def color_availability(s):
-                    styles = []
-                    min_val = s.min()
-                    for val in s:
-                        if pd.isna(val):
-                            styles.append('')
-                        elif val >= 0.99:
-                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
-                        else:
-                            ratio = (val - 0.99) / (min_val - 0.99) if min_val < 0.99 else 0
-                            styles.append(get_red_maroon_style(ratio))
-                    return styles
+                    with tab1:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                    with tab2:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                    with tab3:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.0f} GB'), use_container_width=True)
+                    with tab4:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.0f} GB'), use_container_width=True)
+                    with tab5:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
+                    with tab6:
+                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
 
-                def color_loss(s):
-                    styles = []
-                    min_val = s.min()
-                    for val in s:
-                        if pd.isna(val):
-                            styles.append('')
-                        elif val >= 0:
-                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
-                        else:
-                            ratio = (val - 0) / (min_val - 0) if min_val < 0 else 0
-                            styles.append(get_red_maroon_style(ratio))
-                    return styles
+                    st.divider()
+                    
+                    st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
+                    display_cols = [
+                        'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
+                        'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
+                        'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
+                    ]
+                    
+                    def get_red_maroon_style(ratio):
+                        ratio = max(0, min(1, ratio)) 
+                        r = int(255 - (255 - 128) * ratio)
+                        g = int(153 - (153 - 0) * ratio)
+                        b = int(153 - (153 - 0) * ratio)
+                        bg_color = f'#{r:02x}{g:02x}{b:02x}'
+                        
+                        lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                        txt_color = 'white' if lum < 0.5 else 'black'
+                        return f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;'
 
-                def color_packet_loss(s):
-                    styles = []
-                    max_val = s.max()
-                    for val in s:
-                        if pd.isna(val):
-                            styles.append('')
-                        elif val <= 0.01:
-                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
-                        else:
-                            ratio = (val - 0.01) / (max_val - 0.01) if max_val > 0.01 else 0
-                            styles.append(get_red_maroon_style(ratio))
-                    return styles
-                
-                styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
-                    'Availability': '{:.2%}',
-                    'Packet_Loss': '{:.2%}',
-                    'Actual_Revenue': 'Rp {:,.0f}',
-                    'Potential_Revenue': 'Rp {:,.0f}',
-                    'Lost_Revenue': 'Rp {:,.0f}',
-                    'Actual_Payload': '{:,.0f} GB',
-                    'Potential_Payload': '{:,.0f} GB',
-                    'Lost_Payload': '{:,.0f} GB'
-                }).apply(
-                    color_availability, subset=['Availability']
-                ).apply(
-                    color_packet_loss, subset=['Packet_Loss']
-                ).apply(
-                    color_loss, subset=['Lost_Revenue', 'Lost_Payload']
-                ).background_gradient(
-                    cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload']
-                )
-                
-                st.dataframe(styled_df, use_container_width=True)
+                    def color_availability(s):
+                        styles = []
+                        min_val = s.min()
+                        for val in s:
+                            if pd.isna(val):
+                                styles.append('')
+                            elif val >= 0.99:
+                                styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                            else:
+                                ratio = (val - 0.99) / (min_val - 0.99) if min_val < 0.99 else 0
+                                styles.append(get_red_maroon_style(ratio))
+                        return styles
+
+                    def color_loss(s):
+                        styles = []
+                        min_val = s.min()
+                        for val in s:
+                            if pd.isna(val):
+                                styles.append('')
+                            elif val >= 0:
+                                styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                            else:
+                                ratio = (val - 0) / (min_val - 0) if min_val < 0 else 0
+                                styles.append(get_red_maroon_style(ratio))
+                        return styles
+
+                    def color_packet_loss(s):
+                        styles = []
+                        max_val = s.max()
+                        for val in s:
+                            if pd.isna(val):
+                                styles.append('')
+                            elif val <= 0.01:
+                                styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                            else:
+                                ratio = (val - 0.01) / (max_val - 0.01) if max_val > 0.01 else 0
+                                styles.append(get_red_maroon_style(ratio))
+                        return styles
+                    
+                    styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
+                        'Availability': '{:.2%}',
+                        'Packet_Loss': '{:.2%}',
+                        'Actual_Revenue': 'Rp {:,.0f}',
+                        'Potential_Revenue': 'Rp {:,.0f}',
+                        'Lost_Revenue': 'Rp {:,.0f}',
+                        'Actual_Payload': '{:,.0f} GB',
+                        'Potential_Payload': '{:,.0f} GB',
+                        'Lost_Payload': '{:,.0f} GB'
+                    }).apply(
+                        color_availability, subset=['Availability']
+                    ).apply(
+                        color_packet_loss, subset=['Packet_Loss']
+                    ).apply(
+                        color_loss, subset=['Lost_Revenue', 'Lost_Payload']
+                    ).background_gradient(
+                        cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload']
+                    )
+                    
+                    st.dataframe(styled_df, use_container_width=True)
 
     except Exception as e:
         st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
