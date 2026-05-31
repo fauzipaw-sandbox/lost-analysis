@@ -24,46 +24,46 @@ st.markdown("""
         transform: translateY(-5px);
     }
     
-    /* KOLOM 1: AKTUAL (BIRU) */
+    /* KOLOM 1: POTENSI GAIN (HIJAU) */
     [data-testid="column"]:nth-child(1) [data-testid="stMetric"],
     [data-testid="stColumn"]:nth-child(1) [data-testid="stMetric"] {
-        border-left: 5px solid #0056b3 !important;
+        border-left: 5px solid #28a745 !important;
     }
     [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"],
     [data-testid="stColumn"]:nth-child(1) [data-testid="stMetricValue"] {
-        color: #0056b3 !important;
+        color: #28a745 !important;
     }
     [data-testid="column"]:nth-child(1) [data-testid="stMetric"]:hover,
     [data-testid="stColumn"]:nth-child(1) [data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(0, 86, 179, 0.2) !important;
+        box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
     }
-    
-    /* KOLOM 2: POTENSI GAIN (HIJAU) */
+
+    /* KOLOM 2: LOST (MERAH) */
     [data-testid="column"]:nth-child(2) [data-testid="stMetric"],
     [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"] {
-        border-left: 5px solid #28a745 !important;
+        border-left: 5px solid #EC2028 !important;
     }
     [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"],
     [data-testid="stColumn"]:nth-child(2) [data-testid="stMetricValue"] {
-        color: #28a745 !important;
+        color: #EC2028 !important;
     }
     [data-testid="column"]:nth-child(2) [data-testid="stMetric"]:hover,
     [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
+        box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2) !important;
     }
-    
-    /* KOLOM 3: LOST (MERAH) */
+
+    /* KOLOM 3: AKTUAL (BIRU) */
     [data-testid="column"]:nth-child(3) [data-testid="stMetric"],
     [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"] {
-        border-left: 5px solid #EC2028 !important;
+        border-left: 5px solid #0056b3 !important;
     }
     [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"],
     [data-testid="stColumn"]:nth-child(3) [data-testid="stMetricValue"] {
-        color: #EC2028 !important;
+        color: #0056b3 !important;
     }
     [data-testid="column"]:nth-child(3) [data-testid="stMetric"]:hover,
     [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2) !important;
+        box-shadow: 0 6px 15px rgba(0, 86, 179, 0.2) !important;
     }
     
     [data-testid="stFileUploadDropzone"] {
@@ -71,40 +71,18 @@ st.markdown("""
         border-radius: 10px;
         background-color: #FCF4F4;
     }
-    
-    /* --- CSS STICKY FOOTER --- */
-    .footer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background-color: rgba(255, 255, 255, 0.95);
-        border-top: 1px solid #eaeaea;
-        text-align: center;
-        padding: 12px 0;
-        font-size: 14px;
-        color: #888888;
-        z-index: 999;
-    }
-    
-    /* Ngasih jarak bawah biar tabel/grafik gak ketutupan footer */
-    .block-container {
-        padding-bottom: 80px; 
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- HEADER DENGAN LOGO TELKOMSEL LOKAL ---
-col_logo, col_title = st.columns([1, 15])
+# --- HEADER DENGAN LOGO DI POJOK KANAN ATAS ---
+col_title, col_logo = st.columns([15, 1])
+with col_title:
+    st.markdown("<h1 style='margin-top: -15px;'>💸📉 Network Loss Impact Analyzer</h1>", unsafe_allow_html=True)
 with col_logo:
-    # Cek apakah file logo.png ada di folder. Kalau ada, nampilin.
     if os.path.exists("logo.png"):
         st.image("logo.png", width=60)
     else:
-        # Placeholder kalau logo belum di-upload
-        st.markdown("<h1 style='margin-top: -15px; color: #EC2028;'>🔴</h1>", unsafe_allow_html=True)
-with col_title:
-    st.markdown("<h1 style='margin-top: -15px;'>💸📉 Network Loss Impact Analyzer</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='margin-top: -15px; color: #EC2028; text-align: right;'>🔴</h1>", unsafe_allow_html=True)
 
 
 st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan Availability Network.")
@@ -184,7 +162,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
     try:
         with st.spinner("Mengekstrak dan menggabungkan data dari semua file..."):
             
-            # BACA SEMUA FILE REVENUE
             dfs_rev = []
             for f in file_rev:
                 if f.name.endswith('.csv'):
@@ -195,7 +172,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 dfs_rev.append(df_temp)
             df_rev = pd.concat(dfs_rev, ignore_index=True)
             
-            # BACA SEMUA FILE AVAILABILITY
             dfs_avail = []
             for f in file_avail:
                 if f.name.endswith('.csv'):
@@ -213,7 +189,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 dfs_avail.append(df_temp)
             df_avail = pd.concat(dfs_avail, ignore_index=True)
             
-            # PREPROCESSING
             df_rev['Date'] = pd.to_datetime(df_rev['date'], format='mixed').dt.date
             df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.strip().str.upper()
             
@@ -245,7 +220,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 how='left'
             )
 
-            # Saring hanya site yang masuk NOP Palangkaraya
             if not df_dapot.empty:
                 df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['Site ID'])]
             
@@ -339,15 +313,15 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                     
                     st.write("##### 💰 Analisis Revenue")
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
-                    c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", gain_rev_str, delta_color=gain_rev_col)
-                    c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", loss_rev_str, delta_color=loss_rev_col)
+                    c1.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", gain_rev_str, delta_color=gain_rev_col)
+                    c2.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", loss_rev_str, delta_color=loss_rev_col)
+                    c3.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
                     
                     st.write("##### 📦 Analisis Payload")
                     c4, c5, c6 = st.columns(3)
-                    c4.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
-                    c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", gain_pay_str, delta_color=gain_pay_col)
-                    c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", loss_pay_str, delta_color=loss_pay_col)
+                    c4.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", gain_pay_str, delta_color=gain_pay_col)
+                    c5.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", loss_pay_str, delta_color=loss_pay_col)
+                    c6.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
                     
                     st.divider()
                     
@@ -437,8 +411,8 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                     base_cols = [
                         'Date', 'Site_ID', 'SITE NAME', 'Keterangan', 'SITE CLASS', 
                         'Availability', 'Packet_Loss', 
-                        'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
-                        'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
+                        'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 
+                        'Potential_Payload', 'Lost_Payload', 'Actual_Payload'
                     ]
                     extra_cols = [
                         'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 
@@ -501,17 +475,15 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                                 styles.append(get_red_maroon_style(ratio))
                         return styles
 
-                    # --- FIX LOGIC PACKET LOSS ---
                     def color_packet_loss(s):
                         styles = []
                         max_val = s.max()
                         for val in s:
                             if pd.isna(val) or isinstance(val, str):
                                 styles.append('')
-                            elif val < 0.001: # Kalau kurang dari 0.1% (aman) -> warna hijau
+                            elif val < 0.001: 
                                 styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
                             else:
-                                # Mulai dari 0.1% ke atas langsung transisi ke merah/maroon
                                 ratio = (val - 0.001) / (max_val - 0.001) if max_val > 0.001 else 0
                                 styles.append(get_red_maroon_style(ratio))
                         return styles
@@ -519,20 +491,18 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                     styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
                         'Availability': '{:.2%}',
                         'Packet_Loss': '{:.2%}',
-                        'Actual_Revenue': 'Rp {:,.0f}',
                         'Potential_Revenue': 'Rp {:,.0f}',
                         'Lost_Revenue': 'Rp {:,.0f}',
-                        'Actual_Payload': '{:,.0f} GB',
+                        'Actual_Revenue': 'Rp {:,.0f}',
                         'Potential_Payload': '{:,.0f} GB',
-                        'Lost_Payload': '{:,.0f} GB'
+                        'Lost_Payload': '{:,.0f} GB',
+                        'Actual_Payload': '{:,.0f} GB'
                     }).apply(
                         color_availability, subset=['Availability']
                     ).apply(
                         color_packet_loss, subset=['Packet_Loss']
                     ).apply(
                         color_loss, subset=['Lost_Revenue', 'Lost_Payload']
-                    ).background_gradient(
-                        cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload']
                     )
                     
                     st.dataframe(styled_df, use_container_width=True)
@@ -540,9 +510,9 @@ if len(file_rev) > 0 and len(file_avail) > 0:
     except Exception as e:
         st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
 
-# --- FOOTER HAK CIPTA STICKY DI BAWAH ---
+# --- FOOTER HAK CIPTA STATIS (NON-STICKY) ---
 st.markdown("""
-<div class="footer">
+<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">
     © 2026 | Created with ❤️ by Fauzi Ramdani - 97122
 </div>
 """, unsafe_allow_html=True)
