@@ -7,13 +7,10 @@ st.set_page_config(page_title="Network Loss Impact", layout="wide")
 # --- INJEKSI KUSTOM CSS TEMA TELKOMSEL & HIJAU POTENSI ---
 st.markdown("""
 <style>
-    /* Bikin garis atas merah khas Telkomsel */
     .stApp > header {
         background-color: transparent;
         border-top: 5px solid #EC2028;
     }
-    
-    /* Styling Default Metric Cards (Aktual & Lost) */
     [data-testid="stMetric"] {
         background-color: #ffffff;
         border-left: 5px solid #EC2028;
@@ -22,31 +19,23 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
         transition: transform 0.2s ease-in-out;
     }
-    
     [data-testid="stMetric"]:hover {
         transform: translateY(-5px);
         box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2);
     }
-    
     [data-testid="stMetricValue"] {
         color: #EC2028;
         font-weight: 800;
     }
-    
-    /* --- TEMA HIJAU KHUSUS KOLOM POTENSI (KOLOM KE-2) --- */
     [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"] {
         border-left: 5px solid #28a745 !important;
     }
-    
     [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]:hover {
         box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
     }
-    
     [data-testid="column"]:nth-of-type(2) [data-testid="stMetricValue"] {
         color: #28a745 !important;
     }
-    
-    /* Custom kotak Drag & Drop */
     [data-testid="stFileUploadDropzone"] {
         border: 2px dashed #EC2028;
         border-radius: 10px;
@@ -171,7 +160,6 @@ if file_rev is not None and file_avail is not None:
             
         st.success("✅ Data berhasil digabungkan!")
         
-        # --- 4. TAMPILAN DASHBOARD ---
         st.divider()
         st.write("### ⚙️ Filter Analisis")
         
@@ -187,130 +175,4 @@ if file_rev is not None and file_avail is not None:
             max_date = df_merged['Date'].max()
             selected_dates = st.date_input(
                 "📅 Pilih Periode Tanggal (Rentang):", 
-                value=(min_date, max_date), 
-                min_value=min_date, 
-                max_value=max_date
-            )
-
-        if search_site_selection != "-- Pilih Site --":
-            search_site = search_site_selection.split(" - ")[0]
-            
-            if len(selected_dates) == 2:
-                start_date, end_date = selected_dates
-            else:
-                start_date = end_date = selected_dates[0]
-                
-            df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)]
-            impact_df = calculate_loss(df_periode, search_site, site_mapping)
-            
-            if impact_df.empty:
-                st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
-            else:
-                st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
-                
-                # Kalkulasi Total
-                tot_act_rev = impact_df['Actual_Revenue'].sum()
-                tot_pot_rev = impact_df['Potential_Revenue'].sum()
-                tot_lost_rev = impact_df['Lost_Revenue'].sum()
-                
-                tot_act_pay = impact_df['Actual_Payload'].sum()
-                tot_pot_pay = impact_df['Potential_Payload'].sum()
-                tot_lost_pay = impact_df['Lost_Payload'].sum()
-                
-                # Hitung Persentase Kenaikan / Loss
-                pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
-                pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
-                
-                pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
-                pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
-                
-                # Render 6 Kartu Matrix
-                st.write("##### 💰 Analisis Revenue")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
-                # Kenaikan persentase diformat pakai tanda (+) di depan angka
-                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
-                # Angka tot_lost_rev udah minus, jadi langsung nampil panah merah otomatis
-                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
-                
-                st.write("##### 📦 Analisis Payload")
-                c4, c5, c6 = st.columns(3)
-                c4.metric("Traffic Aktual", f"{tot_act_pay:,.2f} GB")
-                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB", f"{pct_lost_pay:,.2f}% Loss")
-                
-                st.divider()
-                
-                # --- 5. GRAFIK TREND ---
-                st.write("### 📊 Trend Grafik Harian")
-                
-                trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
-                    'Actual_Revenue': 'sum',
-                    'Potential_Revenue': 'sum',
-                    'Lost_Revenue': 'sum',
-                    'Actual_Payload': 'sum',
-                    'Potential_Payload': 'sum',
-                    'Lost_Payload': 'sum',
-                    'Availability_Pct': 'mean',
-                    'Packet_Loss_Pct': 'mean'
-                }).reset_index()
-                
-                trend_df['Date_Str'] = trend_df['Date'].astype(str)
-                
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                    "Gain Rev (Potensi)", "Lost Rev", 
-                    "Gain Payload (Potensi)", "Lost Payload", 
-                    "Availability", "Packet Loss"
-                ])
-                
-                def buat_grafik(df, x_col, y_col, format_tooltip):
-                    fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
-                    fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
-                    return fig
-
-                with tab1:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
-                with tab2:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
-                with tab3:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.2f} GB'), use_container_width=True)
-                with tab4:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.2f} GB'), use_container_width=True)
-                with tab5:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
-                with tab6:
-                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
-
-                st.divider()
-                
-                # --- 6. TABEL RAW DATA DENGAN GRADIENT WARNA ---
-                st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
-                display_cols = [
-                    'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
-                    'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
-                    'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
-                ]
-                
-                styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
-                    'Availability': '{:.2%}',
-                    'Packet_Loss': '{:.2%}',
-                    'Actual_Revenue': 'Rp {:,.0f}',
-                    'Potential_Revenue': 'Rp {:,.0f}',
-                    'Lost_Revenue': 'Rp {:,.0f}',
-                    'Actual_Payload': '{:,.2f} GB',
-                    'Potential_Payload': '{:,.2f} GB',
-                    'Lost_Payload': '{:,.2f} GB'
-                }).background_gradient(
-                    cmap='RdYlGn', subset=['Availability']
-                ).background_gradient(
-                    cmap='RdYlGn_r', subset=['Packet_Loss']
-                ).background_gradient(
-                    cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload'] # Ubah jadi warna hijau
-                ).background_gradient(
-                    cmap='RdYlGn', subset=['Lost_Revenue', 'Lost_Payload']
-                )
-                
-                st.dataframe(styled_df, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
+                value=(min_date, max_date),
