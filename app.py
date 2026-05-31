@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import io
 
-st.set_page_config(page_title="Network Loss Impact", layout="wide")
+st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 
 # --- INJEKSI KUSTOM CSS ---
 st.markdown("""
@@ -70,14 +70,33 @@ st.markdown("""
         border-radius: 10px;
         background-color: #FCF4F4;
     }
+    
+    /* --- CSS STICKY FOOTER --- */
+    .footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background-color: rgba(255, 255, 255, 0.95);
+        border-top: 1px solid #eaeaea;
+        text-align: center;
+        padding: 12px 0;
+        font-size: 14px;
+        color: #888888;
+        z-index: 999;
+    }
+    
+    /* Ngasih jarak bawah biar tabel/grafik gak ketutupan footer */
+    .block-container {
+        padding-bottom: 80px; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- HEADER DENGAN LOGO TELKOMSEL ---
+# --- HEADER DENGAN LOGO TELKOMSEL (Pakai Tag HTML biar anti-error) ---
 col_logo, col_title = st.columns([1, 15])
 with col_logo:
-    # Menggunakan logo Telkomsel resmi dari link public
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Telkomsel_2021_icon.svg/512px-Telkomsel_2021_icon.svg.png", width=60)
+    st.markdown('<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Telkomsel_2021_icon.svg/512px-Telkomsel_2021_icon.svg.png" width="60" style="margin-top: 5px;">', unsafe_allow_html=True)
 with col_title:
     st.markdown("<h1 style='margin-top: -15px;'>💸📉 Network Loss Impact Analyzer</h1>", unsafe_allow_html=True)
 
@@ -96,7 +115,6 @@ st.markdown("""
 def load_dapot():
     try:
         df_dapot = pd.read_excel("Dapot site kalimantan.xlsx", engine="openpyxl")
-        # FILTER: Cuma ambil yang DEPARTEMEN-nya NOP PALANGKARAYA biar enteng!
         df_dapot = df_dapot[df_dapot['DEPARTEMEN'].astype(str).str.contains('NOP PALANGKARAYA', case=False, na=False)]
         df_dapot['Site ID'] = df_dapot['Site ID'].astype(str).str.strip().str.upper()
         return df_dapot
@@ -221,11 +239,12 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 how='left'
             )
 
-            # EKSKLUSIF: Saring hanya site yang masuk NOP Palangkaraya (Sesuai Dapot)
+            # Saring hanya site yang masuk NOP Palangkaraya
             if not df_dapot.empty:
                 df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['Site ID'])]
             
-        st.success("✅ Data NOP Palangkaraya berhasil digabungkan!")
+        # --- REVISI PESAN SUCCESS ---
+        st.success("✅ Data berhasil digabungkan!")
         
         st.divider()
         st.write("### ⚙️ Filter Analisis")
@@ -340,7 +359,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                         'Packet_Loss_Pct': 'mean'
                     }).reset_index()
                     
-                    # HITUNG PERSENTASE GAIN & LOSS UNTUK TOOLTIP GRAFIK
                     trend_df['Pct_Gain_Rev'] = trend_df.apply(lambda r: ((r['Potential_Revenue'] - r['Actual_Revenue']) / r['Actual_Revenue'] * 100) if r['Actual_Revenue'] > 0 else 0, axis=1)
                     trend_df['Pct_Loss_Rev'] = trend_df.apply(lambda r: (r['Lost_Revenue'] / r['Potential_Revenue'] * 100) if r['Potential_Revenue'] > 0 else 0, axis=1)
                     
@@ -355,7 +373,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                         "Availability", "Packet Loss"
                     ])
                     
-                    # --- TOOLTIP GRAFIK KOMPLIT (Avail, PL, %, Potensi, Loss, Aktual) ---
                     def buat_grafik_rev(df, x_col, y_col):
                         fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline',
                                       custom_data=['Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Availability_Pct', 'Packet_Loss_Pct', 'Pct_Gain_Rev', 'Pct_Loss_Rev'])
@@ -516,9 +533,9 @@ if len(file_rev) > 0 and len(file_avail) > 0:
     except Exception as e:
         st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
 
-# --- FOOTER HAK CIPTA ---
+# --- FOOTER HAK CIPTA STICKY DI BAWAH ---
 st.markdown("""
-<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">
+<div class="footer">
     © 2026 | Created with ❤️ by Fauzi Ramdani - 97122
 </div>
 """, unsafe_allow_html=True)
