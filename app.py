@@ -51,8 +51,8 @@ st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan Av
 st.markdown("""
 <div style='background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 3px solid #0056b3;'>
     ℹ️ <b>Sumber Data:</b><br>
-    Untuk data "Revenue & Payload" ambil disini: <a href="#" target="_blank">Payload Traffic Revenue NDM</a> <br>
-    Untuk data "Availability & Packet loss" ambil disini: <a href="#" target="_blank">Payload Traffic Revenue UME</a>
+    Untuk data "Revenue & Payload" ambil <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=K0OO8x" target="_blank">disini</a> <br>
+    Untuk data "Availability & Packet loss" ambil <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=MrwZgO" target="_blank">disini</a>
 </div>
 """, unsafe_allow_html=True)
 
