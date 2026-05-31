@@ -73,7 +73,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💸 Network Loss Impact Dashboard")
+# --- HEADER DENGAN LOGO TELKOMSEL ---
+col_logo, col_title = st.columns([1, 15])
+with col_logo:
+    # Menggunakan logo Telkomsel resmi dari link public
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Telkomsel_2021_icon.svg/512px-Telkomsel_2021_icon.svg.png", width=60)
+with col_title:
+    st.markdown("<h1 style='margin-top: -15px;'>💸📉 Network Loss Impact Analyzer</h1>", unsafe_allow_html=True)
+
 
 st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan Availability Network.")
 st.markdown("""
@@ -84,11 +91,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 1. LOAD MAPPING SITE ANAKAN & NAMA SITE DARI FILE LOKAL ---
+# --- 1. LOAD MAPPING SITE & FILTER NOP PALANGKARAYA ---
 @st.cache_data
 def load_dapot():
     try:
         df_dapot = pd.read_excel("Dapot site kalimantan.xlsx", engine="openpyxl")
+        # FILTER: Cuma ambil yang DEPARTEMEN-nya NOP PALANGKARAYA biar enteng!
+        df_dapot = df_dapot[df_dapot['DEPARTEMEN'].astype(str).str.contains('NOP PALANGKARAYA', case=False, na=False)]
         df_dapot['Site ID'] = df_dapot['Site ID'].astype(str).str.strip().str.upper()
         return df_dapot
     except Exception as e:
@@ -136,7 +145,6 @@ def calculate_loss(df, site_id, mapping):
     filtered_df['Availability_Pct'] = filtered_df['Availability'] * 100
     filtered_df['Packet_Loss_Pct'] = filtered_df['Packet_Loss'] * 100
     
-    # Penamaan baru untuk Keterangan Induk/Anak
     filtered_df['Keterangan'] = filtered_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x == site_id else 'Anakan (Child)')
     
     return filtered_df
@@ -144,16 +152,15 @@ def calculate_loss(df, site_id, mapping):
 # --- 3. BIKIN UI STREAMLIT MULTI UPLOAD ---
 col_up1, col_up2 = st.columns(2)
 with col_up1:
-    # Multiple files diset True
-    file_rev = st.file_uploader("📂 1. Upload Data Revenue (Bisa pilih banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+    file_rev = st.file_uploader("📂 1. Upload Data Revenue (Bisa banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 with col_up2:
-    file_avail = st.file_uploader("📂 2. Upload Data Availability (Bisa pilih banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+    file_avail = st.file_uploader("📂 2. Upload Data Availability (Bisa banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
 if len(file_rev) > 0 and len(file_avail) > 0:
     try:
         with st.spinner("Mengekstrak dan menggabungkan data dari semua file..."):
             
-            # --- BACA SEMUA FILE REVENUE ---
+            # BACA SEMUA FILE REVENUE
             dfs_rev = []
             for f in file_rev:
                 if f.name.endswith('.csv'):
@@ -164,7 +171,7 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 dfs_rev.append(df_temp)
             df_rev = pd.concat(dfs_rev, ignore_index=True)
             
-            # --- BACA SEMUA FILE AVAILABILITY ---
+            # BACA SEMUA FILE AVAILABILITY
             dfs_avail = []
             for f in file_avail:
                 if f.name.endswith('.csv'):
@@ -182,7 +189,7 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 dfs_avail.append(df_temp)
             df_avail = pd.concat(dfs_avail, ignore_index=True)
             
-            # --- PREPROCESSING ---
+            # PREPROCESSING
             df_rev['Date'] = pd.to_datetime(df_rev['date'], format='mixed').dt.date
             df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.strip().str.upper()
             
@@ -204,7 +211,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
             df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
 
-            # Buang duplikat buat antisipasi file ganda yang di-upload
             df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'])
             df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'])
 
@@ -214,8 +220,12 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 on=['Site_ID', 'Date'], 
                 how='left'
             )
+
+            # EKSKLUSIF: Saring hanya site yang masuk NOP Palangkaraya (Sesuai Dapot)
+            if not df_dapot.empty:
+                df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['Site ID'])]
             
-        st.success("✅ Data dari berbagai file berhasil digabungkan!")
+        st.success("✅ Data NOP Palangkaraya berhasil digabungkan!")
         
         st.divider()
         st.write("### ⚙️ Filter Analisis")
@@ -252,7 +262,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
             if impact_df.empty:
                 st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
             else:
-                # --- GABUNGIN METADATA DAPOT KE IMPACT_DF ---
                 if not df_dapot.empty:
                     dapot_cols = ['Site ID', 'SITE NAME', 'SITE CLASS', 'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site']
                     dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
@@ -331,6 +340,13 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                         'Packet_Loss_Pct': 'mean'
                     }).reset_index()
                     
+                    # HITUNG PERSENTASE GAIN & LOSS UNTUK TOOLTIP GRAFIK
+                    trend_df['Pct_Gain_Rev'] = trend_df.apply(lambda r: ((r['Potential_Revenue'] - r['Actual_Revenue']) / r['Actual_Revenue'] * 100) if r['Actual_Revenue'] > 0 else 0, axis=1)
+                    trend_df['Pct_Loss_Rev'] = trend_df.apply(lambda r: (r['Lost_Revenue'] / r['Potential_Revenue'] * 100) if r['Potential_Revenue'] > 0 else 0, axis=1)
+                    
+                    trend_df['Pct_Gain_Pay'] = trend_df.apply(lambda r: ((r['Potential_Payload'] - r['Actual_Payload']) / r['Actual_Payload'] * 100) if r['Actual_Payload'] > 0 else 0, axis=1)
+                    trend_df['Pct_Loss_Pay'] = trend_df.apply(lambda r: (r['Lost_Payload'] / r['Potential_Payload'] * 100) if r['Potential_Payload'] > 0 else 0, axis=1)
+                    
                     trend_df['Date_Str'] = trend_df['Date'].astype(str)
                     
                     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -339,14 +355,16 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                         "Availability", "Packet Loss"
                     ])
                     
-                    # --- GRAFIK DESIGN SMOOTH & POP-UP URUT ---
+                    # --- TOOLTIP GRAFIK KOMPLIT (Avail, PL, %, Potensi, Loss, Aktual) ---
                     def buat_grafik_rev(df, x_col, y_col):
                         fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline',
-                                      custom_data=['Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue'])
+                                      custom_data=['Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Availability_Pct', 'Packet_Loss_Pct', 'Pct_Gain_Rev', 'Pct_Loss_Rev'])
                         fig.update_traces(
                             hovertemplate="<b>%{x}</b><br><br>" +
-                                          "🌟 Potensi Gain: Rp %{customdata[0]:,.0f}<br>" +
-                                          "📉 Loss: Rp %{customdata[1]:,.0f}<br>" +
+                                          "📡 Availability: %{customdata[3]:.2f}%<br>" +
+                                          "⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>" +
+                                          "🌟 Potensi Gain: Rp %{customdata[0]:,.0f} (+%{customdata[5]:.2f}%)<br>" +
+                                          "📉 Loss: Rp %{customdata[1]:,.0f} (%{customdata[6]:.2f}%)<br>" +
                                           "💰 Aktual: Rp %{customdata[2]:,.0f}<extra></extra>",
                             line=dict(width=3), marker=dict(size=8)
                         )
@@ -355,11 +373,13 @@ if len(file_rev) > 0 and len(file_avail) > 0:
 
                     def buat_grafik_pay(df, x_col, y_col):
                         fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline',
-                                      custom_data=['Potential_Payload', 'Lost_Payload', 'Actual_Payload'])
+                                      custom_data=['Potential_Payload', 'Lost_Payload', 'Actual_Payload', 'Availability_Pct', 'Packet_Loss_Pct', 'Pct_Gain_Pay', 'Pct_Loss_Pay'])
                         fig.update_traces(
                             hovertemplate="<b>%{x}</b><br><br>" +
-                                          "🚀 Potensi Gain: %{customdata[0]:,.0f} GB<br>" +
-                                          "📉 Loss: %{customdata[1]:,.0f} GB<br>" +
+                                          "📡 Availability: %{customdata[3]:.2f}%<br>" +
+                                          "⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>" +
+                                          "🚀 Potensi Gain: %{customdata[0]:,.0f} GB (+%{customdata[5]:.2f}%)<br>" +
+                                          "📉 Loss: %{customdata[1]:,.0f} GB (%{customdata[6]:.2f}%)<br>" +
                                           "📦 Aktual: %{customdata[2]:,.0f} GB<extra></extra>",
                             line=dict(width=3), marker=dict(size=8)
                         )
@@ -392,7 +412,6 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                     
                     st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
                     
-                    # --- FITUR EXPAND/HIDE COLUMN & EXCEL DOWNLOAD ---
                     base_cols = [
                         'Date', 'Site_ID', 'SITE NAME', 'Keterangan', 'SITE CLASS', 
                         'Availability', 'Packet_Loss', 
@@ -404,21 +423,17 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                         'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site'
                     ]
                     
-                    # Hanya ambil kolom yang beneran ada di hasil merge
                     base_cols = [c for c in base_cols if c in impact_df.columns]
                     extra_cols = [c for c in extra_cols if c in impact_df.columns]
                     
                     col_t1, col_t2 = st.columns([1, 1])
                     with col_t1:
-                        # Toggle buat nampilin/sembunyiin kolom ekstra di Web
                         tampilkan_detail = st.toggle("🔍 Tampilkan Kolom Detail Ekstra (Expand)")
                         display_cols = base_cols + extra_cols if tampilkan_detail else base_cols
                     
                     with col_t2:
-                        # Engine bikin file Excel buat Download (Full Kolom)
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            # Drop kolom 'Site ID' yang duplicate dari hasil merge
                             impact_df.drop(columns=['Site ID'], errors='ignore').to_excel(writer, index=False, sheet_name='Data_Loss')
                         
                         st.download_button(
@@ -500,3 +515,10 @@ if len(file_rev) > 0 and len(file_avail) > 0:
 
     except Exception as e:
         st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
+
+# --- FOOTER HAK CIPTA ---
+st.markdown("""
+<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">
+    © 2026 | Created with ❤️ by Fauzi Ramdani - 97122
+</div>
+""", unsafe_allow_html=True)
