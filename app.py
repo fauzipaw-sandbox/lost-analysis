@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import io
 
 st.set_page_config(page_title="Network Loss Impact", layout="wide")
 
-# --- INJEKSI KUSTOM CSS (UPDATE FIX ELEMEN STREAMLIT TERBARU) ---
+# --- INJEKSI KUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp > header {
@@ -85,20 +86,22 @@ st.markdown("""
 
 # --- 1. LOAD MAPPING SITE ANAKAN & NAMA SITE DARI FILE LOKAL ---
 @st.cache_data
-def load_site_mapping():
+def load_dapot():
     try:
         df_dapot = pd.read_excel("Dapot site kalimantan.xlsx", engine="openpyxl")
         df_dapot['Site ID'] = df_dapot['Site ID'].astype(str).str.strip().str.upper()
-        
-        mapping_anakan = dict(zip(df_dapot['Site ID'], df_dapot['Site Id Anakan'].astype(str)))
-        mapping_name = dict(zip(df_dapot['Site ID'], df_dapot['SITE NAME'].astype(str)))
-        
-        return mapping_anakan, mapping_name
+        return df_dapot
     except Exception as e:
         st.warning("⚠️ File 'Dapot site kalimantan.xlsx' tidak ditemukan. Fitur nama site dinonaktifkan.")
-        return {}, {}
+        return pd.DataFrame()
 
-site_mapping, name_mapping = load_site_mapping()
+df_dapot = load_dapot()
+if not df_dapot.empty:
+    site_mapping = dict(zip(df_dapot['Site ID'], df_dapot['Site Id Anakan'].astype(str)))
+    name_mapping = dict(zip(df_dapot['Site ID'], df_dapot['SITE NAME'].astype(str)))
+else:
+    site_mapping = {}
+    name_mapping = {}
 
 # --- 2. LOGIC KALKULASI ---
 def calculate_loss(df, site_id, mapping):
@@ -132,41 +135,56 @@ def calculate_loss(df, site_id, mapping):
     
     filtered_df['Availability_Pct'] = filtered_df['Availability'] * 100
     filtered_df['Packet_Loss_Pct'] = filtered_df['Packet_Loss'] * 100
-    filtered_df['Type'] = filtered_df['Site_ID'].apply(lambda x: 'Parent' if x == site_id else 'Child')
+    
+    # Penamaan baru untuk Keterangan Induk/Anak
+    filtered_df['Keterangan'] = filtered_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x == site_id else 'Anakan (Child)')
     
     return filtered_df
 
-# --- 3. BIKIN UI STREAMLIT ---
+# --- 3. BIKIN UI STREAMLIT MULTI UPLOAD ---
 col_up1, col_up2 = st.columns(2)
 with col_up1:
-    file_rev = st.file_uploader("📂 1. Upload/Drag & Drop Data Revenue", type=["csv", "xlsx", "xls"])
+    # Multiple files diset True
+    file_rev = st.file_uploader("📂 1. Upload Data Revenue (Bisa pilih banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 with col_up2:
-    file_avail = st.file_uploader("📂 2. Upload/Drag & Drop Data Availability", type=["csv", "xlsx", "xls"])
+    file_avail = st.file_uploader("📂 2. Upload Data Availability (Bisa pilih banyak file)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
-if file_rev is not None and file_avail is not None:
+if len(file_rev) > 0 and len(file_avail) > 0:
     try:
-        with st.spinner("Mengekstrak dan menggabungkan data..."):
-            if file_rev.name.endswith('.csv'):
-                df_rev = pd.read_csv(file_rev)
-            else:
-                df_rev = pd.read_excel(file_rev)
-            df_rev.columns = df_rev.columns.str.strip() 
+        with st.spinner("Mengekstrak dan menggabungkan data dari semua file..."):
             
-            if file_avail.name.endswith('.csv'):
-                df_avail = pd.read_csv(file_avail)
-            else:
-                xls_avail = pd.ExcelFile(file_avail)
-                sheet_target = xls_avail.sheet_names[0] 
-                for sheet in xls_avail.sheet_names:
-                    df_cek = pd.read_excel(xls_avail, sheet_name=sheet, nrows=1)
-                    if any('Begin Time' in col for col in df_cek.columns):
-                        sheet_target = sheet
-                        break
-                df_avail = pd.read_excel(xls_avail, sheet_name=sheet_target)
-            df_avail.columns = df_avail.columns.str.strip() 
+            # --- BACA SEMUA FILE REVENUE ---
+            dfs_rev = []
+            for f in file_rev:
+                if f.name.endswith('.csv'):
+                    df_temp = pd.read_csv(f)
+                else:
+                    df_temp = pd.read_excel(f)
+                df_temp.columns = df_temp.columns.str.strip()
+                dfs_rev.append(df_temp)
+            df_rev = pd.concat(dfs_rev, ignore_index=True)
             
+            # --- BACA SEMUA FILE AVAILABILITY ---
+            dfs_avail = []
+            for f in file_avail:
+                if f.name.endswith('.csv'):
+                    df_temp = pd.read_csv(f)
+                else:
+                    xls_avail = pd.ExcelFile(f)
+                    sheet_target = xls_avail.sheet_names[0] 
+                    for sheet in xls_avail.sheet_names:
+                        df_cek = pd.read_excel(xls_avail, sheet_name=sheet, nrows=1)
+                        if any('Begin Time' in col for col in df_cek.columns):
+                            sheet_target = sheet
+                            break
+                    df_temp = pd.read_excel(xls_avail, sheet_name=sheet_target)
+                df_temp.columns = df_temp.columns.str.strip()
+                dfs_avail.append(df_temp)
+            df_avail = pd.concat(dfs_avail, ignore_index=True)
+            
+            # --- PREPROCESSING ---
             df_rev['Date'] = pd.to_datetime(df_rev['date'], format='mixed').dt.date
-            df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.upper()
+            df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.strip().str.upper()
             
             rev_col = [c for c in df_rev.columns if 'revenue' in c.lower()][0]
             payload_col = [c for c in df_rev.columns if 'payload' in c.lower()][0]
@@ -186,14 +204,18 @@ if file_rev is not None and file_avail is not None:
             df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
 
+            # Buang duplikat buat antisipasi file ganda yang di-upload
+            df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'])
+            df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'])
+
             df_merged = pd.merge(
                 df_rev, 
-                df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']].drop_duplicates(subset=['Site_ID', 'Date']), 
+                df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], 
                 on=['Site_ID', 'Date'], 
                 how='left'
             )
             
-        st.success("✅ Data berhasil digabungkan!")
+        st.success("✅ Data dari berbagai file berhasil digabungkan!")
         
         st.divider()
         st.write("### ⚙️ Filter Analisis")
@@ -230,6 +252,15 @@ if file_rev is not None and file_avail is not None:
             if impact_df.empty:
                 st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
             else:
+                # --- GABUNGIN METADATA DAPOT KE IMPACT_DF ---
+                if not df_dapot.empty:
+                    dapot_cols = ['Site ID', 'SITE NAME', 'SITE CLASS', 'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site']
+                    dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
+                    impact_df = pd.merge(impact_df, df_dapot[dapot_cols], left_on='Site_ID', right_on='Site ID', how='left')
+                else:
+                    impact_df['SITE NAME'] = 'Unknown'
+                    impact_df['SITE CLASS'] = '-'
+
                 st.write("---")
                 
                 list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
@@ -263,18 +294,13 @@ if file_rev is not None and file_avail is not None:
                     pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
                     pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
                     
-                    # --- FIX LOGIC DELTA WARNA PANAH ---
-                    # REVENUE
                     gain_rev_str = f"+{pct_gain_rev:,.2f}% Kenaikan" if pct_gain_rev > 0 else "0% Kenaikan"
                     gain_rev_col = "normal" if pct_gain_rev > 0 else "off"
-                    
                     loss_rev_str = f"{pct_lost_rev:,.2f}% Loss" if pct_lost_rev < 0 else "0% Loss"
                     loss_rev_col = "normal" if pct_lost_rev < 0 else "off"
 
-                    # PAYLOAD
                     gain_pay_str = f"+{pct_gain_pay:,.2f}% Kenaikan" if pct_gain_pay > 0 else "0% Kenaikan"
                     gain_pay_col = "normal" if pct_gain_pay > 0 else "off"
-                    
                     loss_pay_str = f"{pct_lost_pay:,.2f}% Loss" if pct_lost_pay < 0 else "0% Loss"
                     loss_pay_col = "normal" if pct_lost_pay < 0 else "off"
                     
@@ -313,32 +339,94 @@ if file_rev is not None and file_avail is not None:
                         "Availability", "Packet Loss"
                     ])
                     
-                    def buat_grafik(df, x_col, y_col, format_tooltip):
-                        fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
-                        fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
+                    # --- GRAFIK DESIGN SMOOTH & POP-UP URUT ---
+                    def buat_grafik_rev(df, x_col, y_col):
+                        fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline',
+                                      custom_data=['Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue'])
+                        fig.update_traces(
+                            hovertemplate="<b>%{x}</b><br><br>" +
+                                          "🌟 Potensi Gain: Rp %{customdata[0]:,.0f}<br>" +
+                                          "📉 Loss: Rp %{customdata[1]:,.0f}<br>" +
+                                          "💰 Aktual: Rp %{customdata[2]:,.0f}<extra></extra>",
+                            line=dict(width=3), marker=dict(size=8)
+                        )
+                        fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False, linecolor='lightgray'), yaxis=dict(showgrid=True, gridcolor='#f0f0f0'))
+                        return fig
+
+                    def buat_grafik_pay(df, x_col, y_col):
+                        fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline',
+                                      custom_data=['Potential_Payload', 'Lost_Payload', 'Actual_Payload'])
+                        fig.update_traces(
+                            hovertemplate="<b>%{x}</b><br><br>" +
+                                          "🚀 Potensi Gain: %{customdata[0]:,.0f} GB<br>" +
+                                          "📉 Loss: %{customdata[1]:,.0f} GB<br>" +
+                                          "📦 Aktual: %{customdata[2]:,.0f} GB<extra></extra>",
+                            line=dict(width=3), marker=dict(size=8)
+                        )
+                        fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False, linecolor='lightgray'), yaxis=dict(showgrid=True, gridcolor='#f0f0f0'))
+                        return fig
+
+                    def buat_grafik_pct(df, x_col, y_col):
+                        fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline')
+                        fig.update_traces(
+                            hovertemplate="<b>%{x}</b><br>Nilai: %{y:.2f}%<extra></extra>",
+                            line=dict(width=3), marker=dict(size=8)
+                        )
+                        fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False, linecolor='lightgray'), yaxis=dict(showgrid=True, gridcolor='#f0f0f0'))
                         return fig
 
                     with tab1:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_rev(trend_df, 'Date_Str', 'Potential_Revenue'), use_container_width=True)
                     with tab2:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_rev(trend_df, 'Date_Str', 'Lost_Revenue'), use_container_width=True)
                     with tab3:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.0f} GB'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_pay(trend_df, 'Date_Str', 'Potential_Payload'), use_container_width=True)
                     with tab4:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.0f} GB'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_pay(trend_df, 'Date_Str', 'Lost_Payload'), use_container_width=True)
                     with tab5:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_pct(trend_df, 'Date_Str', 'Availability_Pct'), use_container_width=True)
                     with tab6:
-                        st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
+                        st.plotly_chart(buat_grafik_pct(trend_df, 'Date_Str', 'Packet_Loss_Pct'), use_container_width=True)
 
                     st.divider()
                     
                     st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
-                    display_cols = [
-                        'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
+                    
+                    # --- FITUR EXPAND/HIDE COLUMN & EXCEL DOWNLOAD ---
+                    base_cols = [
+                        'Date', 'Site_ID', 'SITE NAME', 'Keterangan', 'SITE CLASS', 
+                        'Availability', 'Packet_Loss', 
                         'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
                         'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
                     ]
+                    extra_cols = [
+                        'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 
+                        'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site'
+                    ]
+                    
+                    # Hanya ambil kolom yang beneran ada di hasil merge
+                    base_cols = [c for c in base_cols if c in impact_df.columns]
+                    extra_cols = [c for c in extra_cols if c in impact_df.columns]
+                    
+                    col_t1, col_t2 = st.columns([1, 1])
+                    with col_t1:
+                        # Toggle buat nampilin/sembunyiin kolom ekstra di Web
+                        tampilkan_detail = st.toggle("🔍 Tampilkan Kolom Detail Ekstra (Expand)")
+                        display_cols = base_cols + extra_cols if tampilkan_detail else base_cols
+                    
+                    with col_t2:
+                        # Engine bikin file Excel buat Download (Full Kolom)
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            # Drop kolom 'Site ID' yang duplicate dari hasil merge
+                            impact_df.drop(columns=['Site ID'], errors='ignore').to_excel(writer, index=False, sheet_name='Data_Loss')
+                        
+                        st.download_button(
+                            label="📥 Download Full Data (Excel)",
+                            data=buffer.getvalue(),
+                            file_name="Data_Loss_Impact_Full.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     
                     def get_red_maroon_style(ratio):
                         ratio = max(0, min(1, ratio)) 
@@ -346,7 +434,6 @@ if file_rev is not None and file_avail is not None:
                         g = int(153 - (153 - 0) * ratio)
                         b = int(153 - (153 - 0) * ratio)
                         bg_color = f'#{r:02x}{g:02x}{b:02x}'
-                        
                         lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
                         txt_color = 'white' if lum < 0.5 else 'black'
                         return f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;'
@@ -355,7 +442,7 @@ if file_rev is not None and file_avail is not None:
                         styles = []
                         min_val = s.min()
                         for val in s:
-                            if pd.isna(val):
+                            if pd.isna(val) or isinstance(val, str):
                                 styles.append('')
                             elif val >= 0.99:
                                 styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
@@ -368,7 +455,7 @@ if file_rev is not None and file_avail is not None:
                         styles = []
                         min_val = s.min()
                         for val in s:
-                            if pd.isna(val):
+                            if pd.isna(val) or isinstance(val, str):
                                 styles.append('')
                             elif val >= 0:
                                 styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
@@ -381,7 +468,7 @@ if file_rev is not None and file_avail is not None:
                         styles = []
                         max_val = s.max()
                         for val in s:
-                            if pd.isna(val):
+                            if pd.isna(val) or isinstance(val, str):
                                 styles.append('')
                             elif val <= 0.01:
                                 styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
