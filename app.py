@@ -51,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("💸 Network Loss Impact Dashboard")
-st.write("Pantau *lost payload*, *revenue*, dan trend berdasarkan *availability* secara periodik.")
+st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan kualitas *network*.")
 
 # --- 1. LOAD MAPPING SITE ANAKAN & NAMA SITE DARI FILE LOKAL ---
 @st.cache_data
@@ -60,18 +60,17 @@ def load_site_mapping():
         df_dapot = pd.read_excel("Dapot site kalimantan.xlsx", engine="openpyxl")
         df_dapot['Site ID'] = df_dapot['Site ID'].astype(str).str.strip().str.upper()
         
-        # Bikin dua dictionary: satu buat anakan, satu buat nama site
         mapping_anakan = dict(zip(df_dapot['Site ID'], df_dapot['Site Id Anakan'].astype(str)))
         mapping_name = dict(zip(df_dapot['Site ID'], df_dapot['SITE NAME'].astype(str)))
         
         return mapping_anakan, mapping_name
     except Exception as e:
-        st.warning("⚠️ File 'Dapot site kalimantan.xlsx' tidak ditemukan. Fitur nama site dinonaktifkan.")
+        st.warning("⚠️ File 'Dapot site kalimantan.xlsx' tidak ditemukan di folder. Fitur nama site dinonaktifkan.")
         return {}, {}
 
 site_mapping, name_mapping = load_site_mapping()
 
-# --- 2. LOGIC KALKULASI ---
+# --- 2. LOGIC KALKULASI (DITAMBAH POTENTIAL GAIN) ---
 def calculate_loss(df, site_id, mapping):
     child_sites_str = mapping.get(site_id, '')
     if child_sites_str == 'nan' or child_sites_str == '':
@@ -85,15 +84,26 @@ def calculate_loss(df, site_id, mapping):
     if filtered_df.empty:
         return pd.DataFrame()
         
-    # Kalkulasi dibikin MINUS (-) biar kelihatan kalau itu Loss
-    filtered_df['Lost_Revenue'] = filtered_df.apply(
-        lambda row: -1 * ((row['Actual_Revenue'] / row['Availability']) - row['Actual_Revenue']) if row['Availability'] > 0 else -1 * row['Actual_Revenue'], axis=1
-    )
-    filtered_df['Lost_Payload'] = filtered_df.apply(
-        lambda row: -1 * ((row['Actual_Payload'] / row['Availability']) - row['Actual_Payload']) if row['Availability'] > 0 else -1 * row['Actual_Payload'], axis=1
-    )
+    # Fungsi pembantu untuk ngitung Gain Ideal (100% Avail, 0% Packet Loss)
+    def calc_potential(row, col_name):
+        avail = row['Availability']
+        pl = row['Packet_Loss']
+        actual = row[col_name]
+        
+        # Hindari error pembagian nol
+        if avail > 0 and pl < 1:
+            success_rate = avail * (1 - pl)
+            return actual / success_rate
+        return actual
     
-    # Kolom bantuan buat pop-up chart Plotly
+    # Hitung Potential (Gain Maksimal)
+    filtered_df['Potential_Revenue'] = filtered_df.apply(lambda r: calc_potential(r, 'Actual_Revenue'), axis=1)
+    filtered_df['Potential_Payload'] = filtered_df.apply(lambda r: calc_potential(r, 'Actual_Payload'), axis=1)
+    
+    # Hitung Loss (Minus) -> Selisih dari Potential vs Aktual
+    filtered_df['Lost_Revenue'] = -1 * (filtered_df['Potential_Revenue'] - filtered_df['Actual_Revenue'])
+    filtered_df['Lost_Payload'] = -1 * (filtered_df['Potential_Payload'] - filtered_df['Actual_Payload'])
+    
     filtered_df['Availability_Pct'] = filtered_df['Availability'] * 100
     filtered_df['Packet_Loss_Pct'] = filtered_df['Packet_Loss'] * 100
     filtered_df['Type'] = filtered_df['Site_ID'].apply(lambda x: 'Parent' if x == site_id else 'Child')
@@ -103,9 +113,9 @@ def calculate_loss(df, site_id, mapping):
 # --- 3. BIKIN UI STREAMLIT ---
 col_up1, col_up2 = st.columns(2)
 with col_up1:
-    file_rev = st.file_uploader("📂 1. Upload Data Revenue Harian", type=["csv", "xlsx", "xls"])
+    file_rev = st.file_uploader("📂 1. Upload/Drag & Drop Data Revenue", type=["csv", "xlsx", "xls"])
 with col_up2:
-    file_avail = st.file_uploader("📂 2. Upload Data Availability U2000", type=["csv", "xlsx", "xls"])
+    file_avail = st.file_uploader("📂 2. Upload/Drag & Drop Data Availability", type=["csv", "xlsx", "xls"])
 
 if file_rev is not None and file_avail is not None:
     try:
@@ -141,8 +151,6 @@ if file_rev is not None and file_avail is not None:
             
             df_rev.rename(columns={rev_col: 'Actual_Revenue', payload_col: 'Actual_Payload'}, inplace=True)
             df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
-            
-            # Langsung ubah Payload dari MB ke GB di awal
             df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024
             
             df_avail['Date'] = pd.to_datetime(df_avail['Begin Time'], format='mixed').dt.date
@@ -174,7 +182,6 @@ if file_rev is not None and file_avail is not None:
         
         with col_f1:
             all_sites = sorted(df_merged['Site_ID'].dropna().unique().tolist())
-            # Format Dropdown: Site ID - Site Name
             dropdown_options = ["-- Pilih Site --"] + [f"{site} - {name_mapping.get(site, 'Unknown')}" for site in all_sites]
             search_site_selection = st.selectbox("🔍 Cari & Pilih Site ID:", options=dropdown_options)
             
@@ -189,7 +196,6 @@ if file_rev is not None and file_avail is not None:
             )
 
         if search_site_selection != "-- Pilih Site --":
-            # Ekstrak Site ID asli dari string dropdown
             search_site = search_site_selection.split(" - ")[0]
             
             if len(selected_dates) == 2:
@@ -201,16 +207,31 @@ if file_rev is not None and file_avail is not None:
             impact_df = calculate_loss(df_periode, search_site, site_mapping)
             
             if impact_df.empty:
-                st.warning(f"Wah, Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
+                st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
             else:
-                st.write(f"### 📈 Hasil Analisis: {search_site_selection} & Site Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
                 
-                total_lost_rev = impact_df['Lost_Revenue'].sum()
-                total_lost_payload = impact_df['Lost_Payload'].sum()
+                # Menghitung Total
+                tot_act_rev = impact_df['Actual_Revenue'].sum()
+                tot_pot_rev = impact_df['Potential_Revenue'].sum()
+                tot_lost_rev = impact_df['Lost_Revenue'].sum()
                 
-                col_m1, col_m2 = st.columns(2)
-                col_m1.metric("📉 Total Lost Revenue (IDR)", f"Rp {total_lost_rev:,.0f}")
-                col_m2.metric("📦 Total Lost Payload", f"{total_lost_payload:,.2f} GB")
+                tot_act_pay = impact_df['Actual_Payload'].sum()
+                tot_pot_pay = impact_df['Potential_Payload'].sum()
+                tot_lost_pay = impact_df['Lost_Payload'].sum()
+                
+                # Tampilkan 6 Kartu Matrix Keren
+                st.write("##### 💰 Analisis Revenue")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
+                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}")
+                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}")
+                
+                st.write("##### 📦 Analisis Payload")
+                c4, c5, c6 = st.columns(3)
+                c4.metric("Traffic Aktual", f"{tot_act_pay:,.2f} GB")
+                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB")
+                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB")
                 
                 st.divider()
                 
@@ -218,7 +239,11 @@ if file_rev is not None and file_avail is not None:
                 st.write("### 📊 Trend Grafik Harian")
                 
                 trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
+                    'Actual_Revenue': 'sum',
+                    'Potential_Revenue': 'sum',
                     'Lost_Revenue': 'sum',
+                    'Actual_Payload': 'sum',
+                    'Potential_Payload': 'sum',
                     'Lost_Payload': 'sum',
                     'Availability_Pct': 'mean',
                     'Packet_Loss_Pct': 'mean'
@@ -226,50 +251,58 @@ if file_rev is not None and file_avail is not None:
                 
                 trend_df['Date_Str'] = trend_df['Date'].astype(str)
                 
-                tab1, tab2, tab3, tab4 = st.tabs(["Lost Revenue", "Lost Payload", "Availability", "Packet Loss"])
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                    "Gain Rev (Potensi)", "Lost Rev", 
+                    "Gain Payload (Potensi)", "Lost Payload", 
+                    "Availability", "Packet Loss"
+                ])
                 
+                def buat_grafik(df, x_col, y_col, format_tooltip, is_rupiah=False):
+                    fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
+                    fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
+                    # Pakai warna custom plotly biar lebih dinamis
+                    return fig
+
                 with tab1:
-                    fig1 = px.line(trend_df, x='Date_Str', y='Lost_Revenue', color='Site_ID', markers=True)
-                    fig1.update_traces(hovertemplate='Tanggal: %{x}<br>Loss: Rp %{y:,.0f}')
-                    st.plotly_chart(fig1, use_container_width=True)
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
                 with tab2:
-                    fig2 = px.line(trend_df, x='Date_Str', y='Lost_Payload', color='Site_ID', markers=True)
-                    fig2.update_traces(hovertemplate='Tanggal: %{x}<br>Loss: %{y:,.2f} GB')
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
                 with tab3:
-                    fig3 = px.line(trend_df, x='Date_Str', y='Availability_Pct', color='Site_ID', markers=True)
-                    fig3.update_traces(hovertemplate='Tanggal: %{x}<br>Availability: %{y:.2f}%')
-                    st.plotly_chart(fig3, use_container_width=True)
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.2f} GB'), use_container_width=True)
                 with tab4:
-                    fig4 = px.line(trend_df, x='Date_Str', y='Packet_Loss_Pct', color='Site_ID', markers=True)
-                    fig4.update_traces(hovertemplate='Tanggal: %{x}<br>Packet Loss: %{y:.2f}%')
-                    st.plotly_chart(fig4, use_container_width=True)
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.2f} GB'), use_container_width=True)
+                with tab5:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
+                with tab6:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
 
                 st.divider()
                 
                 # --- 6. TABEL RAW DATA DENGAN GRADIENT WARNA ---
-                st.write("### 🗄️ Detail Data Harian")
-                display_cols = ['Date', 'Site_ID', 'Type', 'Availability', 'Packet_Loss', 'Actual_Revenue', 'Lost_Revenue', 'Lost_Payload']
-                
-                # Set Warna: Good to Worst
-                # Availability: Hijau (1.0) ke Merah (0.0) -> RdYlGn
-                # Packet Loss: Hijau (0.0) ke Merah (1.0) -> RdYlGn_r (Reversed)
-                # Lost Rev & Payload: Hijau (0) ke Merah (-Minus Besar) -> RdYlGn (Karena angka minus lebih kecil dari 0)
+                st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
+                display_cols = [
+                    'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
+                    'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
+                    'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
+                ]
                 
                 styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
                     'Availability': '{:.2%}',
                     'Packet_Loss': '{:.2%}',
                     'Actual_Revenue': 'Rp {:,.0f}',
+                    'Potential_Revenue': 'Rp {:,.0f}',
                     'Lost_Revenue': 'Rp {:,.0f}',
+                    'Actual_Payload': '{:,.2f} GB',
+                    'Potential_Payload': '{:,.2f} GB',
                     'Lost_Payload': '{:,.2f} GB'
                 }).background_gradient(
                     cmap='RdYlGn', subset=['Availability']
                 ).background_gradient(
                     cmap='RdYlGn_r', subset=['Packet_Loss']
                 ).background_gradient(
-                    cmap='RdYlGn', subset=['Lost_Revenue']
+                    cmap='Blues', subset=['Potential_Revenue', 'Potential_Payload'] # Warna biru untuk potensi gain
                 ).background_gradient(
-                    cmap='RdYlGn', subset=['Lost_Payload']
+                    cmap='RdYlGn', subset=['Lost_Revenue', 'Lost_Payload']
                 )
                 
                 st.dataframe(styled_df, use_container_width=True)
