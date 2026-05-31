@@ -4,7 +4,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="Network Loss Impact", layout="wide")
 
-# --- INJEKSI KUSTOM CSS TEMA TELKOMSEL ---
+# --- INJEKSI KUSTOM CSS TEMA TELKOMSEL & HIJAU POTENSI ---
 st.markdown("""
 <style>
     /* Bikin garis atas merah khas Telkomsel */
@@ -13,7 +13,7 @@ st.markdown("""
         border-top: 5px solid #EC2028;
     }
     
-    /* Styling Metric Cards biar modern ada shadow & border merah */
+    /* Styling Default Metric Cards (Aktual & Lost) */
     [data-testid="stMetric"] {
         background-color: #ffffff;
         border-left: 5px solid #EC2028;
@@ -23,29 +23,34 @@ st.markdown("""
         transition: transform 0.2s ease-in-out;
     }
     
-    /* Efek hover pada metric cards (responsif) */
     [data-testid="stMetric"]:hover {
         transform: translateY(-5px);
         box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2);
     }
     
-    /* Warna teks angka metrik jadi merah */
     [data-testid="stMetricValue"] {
         color: #EC2028;
         font-weight: 800;
     }
     
-    /* Custom kotak Drag & Drop biar lebih jelas */
+    /* --- TEMA HIJAU KHUSUS KOLOM POTENSI (KOLOM KE-2) --- */
+    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"] {
+        border-left: 5px solid #28a745 !important;
+    }
+    
+    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]:hover {
+        box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
+    }
+    
+    [data-testid="column"]:nth-of-type(2) [data-testid="stMetricValue"] {
+        color: #28a745 !important;
+    }
+    
+    /* Custom kotak Drag & Drop */
     [data-testid="stFileUploadDropzone"] {
         border: 2px dashed #EC2028;
         border-radius: 10px;
         background-color: #FCF4F4;
-    }
-    
-    /* Tombol-tombol Streamlit jadi lebih melengkung */
-    .stButton > button {
-        border-radius: 20px;
-        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -65,12 +70,12 @@ def load_site_mapping():
         
         return mapping_anakan, mapping_name
     except Exception as e:
-        st.warning("⚠️ File 'Dapot site kalimantan.xlsx' tidak ditemukan di folder. Fitur nama site dinonaktifkan.")
+        st.warning("⚠️ File 'Dapot site kalimantan.xlsx' tidak ditemukan. Fitur nama site dinonaktifkan.")
         return {}, {}
 
 site_mapping, name_mapping = load_site_mapping()
 
-# --- 2. LOGIC KALKULASI (DITAMBAH POTENTIAL GAIN) ---
+# --- 2. LOGIC KALKULASI ---
 def calculate_loss(df, site_id, mapping):
     child_sites_str = mapping.get(site_id, '')
     if child_sites_str == 'nan' or child_sites_str == '':
@@ -84,23 +89,19 @@ def calculate_loss(df, site_id, mapping):
     if filtered_df.empty:
         return pd.DataFrame()
         
-    # Fungsi pembantu untuk ngitung Gain Ideal (100% Avail, 0% Packet Loss)
     def calc_potential(row, col_name):
         avail = row['Availability']
         pl = row['Packet_Loss']
         actual = row[col_name]
         
-        # Hindari error pembagian nol
         if avail > 0 and pl < 1:
             success_rate = avail * (1 - pl)
             return actual / success_rate
         return actual
     
-    # Hitung Potential (Gain Maksimal)
     filtered_df['Potential_Revenue'] = filtered_df.apply(lambda r: calc_potential(r, 'Actual_Revenue'), axis=1)
     filtered_df['Potential_Payload'] = filtered_df.apply(lambda r: calc_potential(r, 'Actual_Payload'), axis=1)
     
-    # Hitung Loss (Minus) -> Selisih dari Potential vs Aktual
     filtered_df['Lost_Revenue'] = -1 * (filtered_df['Potential_Revenue'] - filtered_df['Actual_Revenue'])
     filtered_df['Lost_Payload'] = -1 * (filtered_df['Potential_Payload'] - filtered_df['Actual_Payload'])
     
@@ -121,14 +122,12 @@ if file_rev is not None and file_avail is not None:
     try:
         with st.spinner("Mengekstrak dan menggabungkan data..."):
             
-            # LOAD REVENUE
             if file_rev.name.endswith('.csv'):
                 df_rev = pd.read_csv(file_rev)
             else:
                 df_rev = pd.read_excel(file_rev)
             df_rev.columns = df_rev.columns.str.strip() 
             
-            # LOAD AVAILABILITY
             if file_avail.name.endswith('.csv'):
                 df_avail = pd.read_csv(file_avail)
             else:
@@ -142,7 +141,6 @@ if file_rev is not None and file_avail is not None:
                 df_avail = pd.read_excel(xls_avail, sheet_name=sheet_target)
             df_avail.columns = df_avail.columns.str.strip() 
             
-            # PREPROCESSING
             df_rev['Date'] = pd.to_datetime(df_rev['date'], format='mixed').dt.date
             df_rev['Site_ID'] = df_rev['site_id'].astype(str).str.upper()
             
@@ -164,7 +162,6 @@ if file_rev is not None and file_avail is not None:
             df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
 
-            # MERGE
             df_merged = pd.merge(
                 df_rev, 
                 df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']].drop_duplicates(subset=['Site_ID', 'Date']), 
@@ -211,7 +208,7 @@ if file_rev is not None and file_avail is not None:
             else:
                 st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
                 
-                # Menghitung Total
+                # Kalkulasi Total
                 tot_act_rev = impact_df['Actual_Revenue'].sum()
                 tot_pot_rev = impact_df['Potential_Revenue'].sum()
                 tot_lost_rev = impact_df['Lost_Revenue'].sum()
@@ -220,22 +217,31 @@ if file_rev is not None and file_avail is not None:
                 tot_pot_pay = impact_df['Potential_Payload'].sum()
                 tot_lost_pay = impact_df['Lost_Payload'].sum()
                 
-                # Tampilkan 6 Kartu Matrix Keren
+                # Hitung Persentase Kenaikan / Loss
+                pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
+                pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
+                
+                pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
+                pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
+                
+                # Render 6 Kartu Matrix
                 st.write("##### 💰 Analisis Revenue")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
-                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}")
-                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}")
+                # Kenaikan persentase diformat pakai tanda (+) di depan angka
+                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
+                # Angka tot_lost_rev udah minus, jadi langsung nampil panah merah otomatis
+                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
                 
                 st.write("##### 📦 Analisis Payload")
                 c4, c5, c6 = st.columns(3)
                 c4.metric("Traffic Aktual", f"{tot_act_pay:,.2f} GB")
-                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB")
-                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB")
+                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
+                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB", f"{pct_lost_pay:,.2f}% Loss")
                 
                 st.divider()
                 
-                # --- 5. GRAFIK TREND (PLOTLY) ---
+                # --- 5. GRAFIK TREND ---
                 st.write("### 📊 Trend Grafik Harian")
                 
                 trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
@@ -257,10 +263,9 @@ if file_rev is not None and file_avail is not None:
                     "Availability", "Packet Loss"
                 ])
                 
-                def buat_grafik(df, x_col, y_col, format_tooltip, is_rupiah=False):
+                def buat_grafik(df, x_col, y_col, format_tooltip):
                     fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
                     fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
-                    # Pakai warna custom plotly biar lebih dinamis
                     return fig
 
                 with tab1:
@@ -300,7 +305,7 @@ if file_rev is not None and file_avail is not None:
                 ).background_gradient(
                     cmap='RdYlGn_r', subset=['Packet_Loss']
                 ).background_gradient(
-                    cmap='Blues', subset=['Potential_Revenue', 'Potential_Payload'] # Warna biru untuk potensi gain
+                    cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload'] # Ubah jadi warna hijau
                 ).background_gradient(
                     cmap='RdYlGn', subset=['Lost_Revenue', 'Lost_Payload']
                 )
