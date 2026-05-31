@@ -4,7 +4,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="Network Loss Impact", layout="wide")
 
-# --- INJEKSI KUSTOM CSS ---
+# --- INJEKSI KUSTOM CSS (UPDATE FIX ELEMEN STREAMLIT TERBARU) ---
 st.markdown("""
 <style>
     .stApp > header {
@@ -23,35 +23,44 @@ st.markdown("""
     }
     
     /* KOLOM 1: AKTUAL (BIRU) */
-    [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"] {
+    [data-testid="column"]:nth-child(1) [data-testid="stMetric"],
+    [data-testid="stColumn"]:nth-child(1) [data-testid="stMetric"] {
         border-left: 5px solid #0056b3 !important;
     }
-    [data-testid="column"]:nth-of-type(1) [data-testid="stMetricValue"] {
+    [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"],
+    [data-testid="stColumn"]:nth-child(1) [data-testid="stMetricValue"] {
         color: #0056b3 !important;
     }
-    [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"]:hover {
+    [data-testid="column"]:nth-child(1) [data-testid="stMetric"]:hover,
+    [data-testid="stColumn"]:nth-child(1) [data-testid="stMetric"]:hover {
         box-shadow: 0 6px 15px rgba(0, 86, 179, 0.2) !important;
     }
     
     /* KOLOM 2: POTENSI GAIN (HIJAU) */
-    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"] {
+    [data-testid="column"]:nth-child(2) [data-testid="stMetric"],
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"] {
         border-left: 5px solid #28a745 !important;
     }
-    [data-testid="column"]:nth-of-type(2) [data-testid="stMetricValue"] {
+    [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"],
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stMetricValue"] {
         color: #28a745 !important;
     }
-    [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]:hover {
+    [data-testid="column"]:nth-child(2) [data-testid="stMetric"]:hover,
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stMetric"]:hover {
         box-shadow: 0 6px 15px rgba(40, 167, 69, 0.2) !important;
     }
     
     /* KOLOM 3: LOST (MERAH) */
-    [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"] {
+    [data-testid="column"]:nth-child(3) [data-testid="stMetric"],
+    [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"] {
         border-left: 5px solid #EC2028 !important;
     }
-    [data-testid="column"]:nth-of-type(3) [data-testid="stMetricValue"] {
+    [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"],
+    [data-testid="stColumn"]:nth-child(3) [data-testid="stMetricValue"] {
         color: #EC2028 !important;
     }
-    [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"]:hover {
+    [data-testid="column"]:nth-child(3) [data-testid="stMetric"]:hover,
+    [data-testid="stColumn"]:nth-child(3) [data-testid="stMetric"]:hover {
         box-shadow: 0 6px 15px rgba(236, 32, 40, 0.2) !important;
     }
     
@@ -223,7 +232,6 @@ if file_rev is not None and file_avail is not None:
             else:
                 st.write("---")
                 
-                # --- FITUR MULTIPLE SELECT UNTUK SITE TERLIBAT ---
                 list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
                 opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
                 
@@ -255,17 +263,32 @@ if file_rev is not None and file_avail is not None:
                     pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
                     pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
                     
+                    # --- FIX LOGIC DELTA WARNA PANAH ---
+                    # REVENUE
+                    gain_rev_str = f"+{pct_gain_rev:,.2f}% Kenaikan" if pct_gain_rev > 0 else "0% Kenaikan"
+                    gain_rev_col = "normal" if pct_gain_rev > 0 else "off"
+                    
+                    loss_rev_str = f"{pct_lost_rev:,.2f}% Loss" if pct_lost_rev < 0 else "0% Loss"
+                    loss_rev_col = "normal" if pct_lost_rev < 0 else "off"
+
+                    # PAYLOAD
+                    gain_pay_str = f"+{pct_gain_pay:,.2f}% Kenaikan" if pct_gain_pay > 0 else "0% Kenaikan"
+                    gain_pay_col = "normal" if pct_gain_pay > 0 else "off"
+                    
+                    loss_pay_str = f"{pct_lost_pay:,.2f}% Loss" if pct_lost_pay < 0 else "0% Loss"
+                    loss_pay_col = "normal" if pct_lost_pay < 0 else "off"
+                    
                     st.write("##### 💰 Analisis Revenue")
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
-                    c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
-                    c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
+                    c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", gain_rev_str, delta_color=gain_rev_col)
+                    c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", loss_rev_str, delta_color=loss_rev_col)
                     
                     st.write("##### 📦 Analisis Payload")
                     c4, c5, c6 = st.columns(3)
                     c4.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
-                    c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-                    c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", f"{pct_lost_pay:,.2f}% Loss")
+                    c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", gain_pay_str, delta_color=gain_pay_col)
+                    c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", loss_pay_str, delta_color=loss_pay_col)
                     
                     st.divider()
                     
