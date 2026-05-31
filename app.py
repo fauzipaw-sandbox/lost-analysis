@@ -173,6 +173,175 @@ if file_rev is not None and file_avail is not None:
         with col_f2:
             min_date = df_merged['Date'].min()
             max_date = df_merged['Date'].max()
+            
+            # Ini nih baris yang tadi bikin error kalau kurungnya kehapus
             selected_dates = st.date_input(
                 "📅 Pilih Periode Tanggal (Rentang):", 
-                value=(min_date, max_date),
+                value=(min_date, max_date), 
+                min_value=min_date, 
+                max_value=max_date
+            )
+
+        if search_site_selection != "-- Pilih Site --":
+            search_site = search_site_selection.split(" - ")[0]
+            
+            if len(selected_dates) == 2:
+                start_date, end_date = selected_dates
+            else:
+                start_date = end_date = selected_dates[0]
+                
+            df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)]
+            impact_df = calculate_loss(df_periode, search_site, site_mapping)
+            
+            if impact_df.empty:
+                st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
+            else:
+                st.write(f"### 📈 Ringkasan Performa: {search_site_selection} & Anakannya ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+                
+                tot_act_rev = impact_df['Actual_Revenue'].sum()
+                tot_pot_rev = impact_df['Potential_Revenue'].sum()
+                tot_lost_rev = impact_df['Lost_Revenue'].sum()
+                
+                tot_act_pay = impact_df['Actual_Payload'].sum()
+                tot_pot_pay = impact_df['Potential_Payload'].sum()
+                tot_lost_pay = impact_df['Lost_Payload'].sum()
+                
+                pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
+                pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
+                
+                pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
+                pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
+                
+                st.write("##### 💰 Analisis Revenue")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
+                c2.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
+                c3.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"{pct_lost_rev:,.2f}% Loss")
+                
+                st.write("##### 📦 Analisis Payload")
+                c4, c5, c6 = st.columns(3)
+                c4.metric("Traffic Aktual", f"{tot_act_pay:,.2f} GB")
+                c5.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.2f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
+                c6.metric("📉 Lost Payload", f"{tot_lost_pay:,.2f} GB", f"{pct_lost_pay:,.2f}% Loss")
+                
+                st.divider()
+                
+                st.write("### 📊 Trend Grafik Harian")
+                
+                trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
+                    'Actual_Revenue': 'sum',
+                    'Potential_Revenue': 'sum',
+                    'Lost_Revenue': 'sum',
+                    'Actual_Payload': 'sum',
+                    'Potential_Payload': 'sum',
+                    'Lost_Payload': 'sum',
+                    'Availability_Pct': 'mean',
+                    'Packet_Loss_Pct': 'mean'
+                }).reset_index()
+                
+                trend_df['Date_Str'] = trend_df['Date'].astype(str)
+                
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                    "Gain Rev (Potensi)", "Lost Rev", 
+                    "Gain Payload (Potensi)", "Lost Payload", 
+                    "Availability", "Packet Loss"
+                ])
+                
+                def buat_grafik(df, x_col, y_col, format_tooltip):
+                    fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True)
+                    fig.update_traces(hovertemplate=f'Tanggal: %{{x}}<br>Nilai: {format_tooltip}')
+                    return fig
+
+                with tab1:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                with tab2:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'Rp %{y:,.0f}'), use_container_width=True)
+                with tab3:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', '%{y:,.2f} GB'), use_container_width=True)
+                with tab4:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', '%{y:,.2f} GB'), use_container_width=True)
+                with tab5:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', '%{y:.2f}%'), use_container_width=True)
+                with tab6:
+                    st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', '%{y:.2f}%'), use_container_width=True)
+
+                st.divider()
+                
+                # --- 6. TABEL RAW DATA DENGAN FUNGSI WARNA CUSTOM ---
+                st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
+                display_cols = [
+                    'Date', 'Site_ID', 'Availability', 'Packet_Loss', 
+                    'Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue', 
+                    'Actual_Payload', 'Potential_Payload', 'Lost_Payload'
+                ]
+                
+                # FUNGSI KUSTOM: Availability (< 0.99 Kuning -> Maroon)
+                def color_availability(s):
+                    styles = []
+                    min_val = s.min()
+                    for val in s:
+                        if pd.isna(val):
+                            styles.append('')
+                            continue
+                        if val >= 0.99:
+                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                        else:
+                            ratio = (val - min_val) / (0.99 - min_val) if min_val < 0.99 else 1.0
+                            ratio = max(0, min(1, ratio))
+                            
+                            r = int(128 + (255 - 128) * ratio)
+                            g = int(0 + (255 - 0) * ratio)
+                            bg_color = f'#{r:02x}{g:02x}00'
+                            
+                            lum = (0.299 * r + 0.587 * g) / 255
+                            txt_color = 'white' if lum < 0.5 else 'black'
+                            styles.append(f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;')
+                    return styles
+
+                # FUNGSI KUSTOM: Loss (< 0 Kuning -> Maroon)
+                def color_loss(s):
+                    styles = []
+                    min_val = s.min()
+                    for val in s:
+                        if pd.isna(val):
+                            styles.append('')
+                            continue
+                        if val >= 0:
+                            styles.append('background-color: #d4edda; color: #155724; font-weight: bold;')
+                        else:
+                            ratio = (val - min_val) / (0 - min_val) if min_val < 0 else 1.0
+                            ratio = max(0, min(1, ratio))
+                            
+                            r = int(128 + (255 - 128) * ratio)
+                            g = int(0 + (255 - 0) * ratio)
+                            bg_color = f'#{r:02x}{g:02x}00'
+                            
+                            lum = (0.299 * r + 0.587 * g) / 255
+                            txt_color = 'white' if lum < 0.5 else 'black'
+                            styles.append(f'background-color: {bg_color}; color: {txt_color}; font-weight: bold;')
+                    return styles
+                
+                # Penerapan Formatting ke Tabel
+                styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
+                    'Availability': '{:.2%}',
+                    'Packet_Loss': '{:.2%}',
+                    'Actual_Revenue': 'Rp {:,.0f}',
+                    'Potential_Revenue': 'Rp {:,.0f}',
+                    'Lost_Revenue': 'Rp {:,.0f}',
+                    'Actual_Payload': '{:,.2f} GB',
+                    'Potential_Payload': '{:,.2f} GB',
+                    'Lost_Payload': '{:,.2f} GB'
+                }).apply(
+                    color_availability, subset=['Availability']
+                ).apply(
+                    color_loss, subset=['Lost_Revenue', 'Lost_Payload']
+                ).background_gradient(
+                    cmap='RdYlGn_r', subset=['Packet_Loss']
+                ).background_gradient(
+                    cmap='Greens', subset=['Potential_Revenue', 'Potential_Payload']
+                )
+                
+                st.dataframe(styled_df, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
