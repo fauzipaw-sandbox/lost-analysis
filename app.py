@@ -89,8 +89,8 @@ st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site berdasarkan Av
 st.markdown("""
 <div style='background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 3px solid #0056b3;'>
     ℹ️ <b>Sumber Data:</b><br>
-    Untuk data "Revenue & Payload" ambil disini: <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=BMOMOs" target="_blank">Payload Traffic Revenue NDM</a> <br>
-    Untuk data "Availability & Packet loss" ambil disini: <a href="https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=S1CXhz" target="_blank">Payload Traffic Revenue UME</a>
+    Untuk data "Revenue & Payload" ambil disini: <a href="MASUKIN_LINK_URL_NDM_ASLINYA_DISINI" target="_blank">Payload Traffic Revenue NDM</a> <br>
+    Untuk data "Availability & Packet loss" ambil disini: <a href="MASUKIN_LINK_URL_UME_ASLINYA_DISINI" target="_blank">Payload Traffic Revenue UME</a>
 </div>
 """, unsafe_allow_html=True)
 
@@ -114,15 +114,21 @@ else:
     site_mapping = {}
     name_mapping = {}
 
-# --- 2. LOGIC KALKULASI ---
-def calculate_loss(df, site_id, mapping):
-    child_sites_str = mapping.get(site_id, '')
-    if child_sites_str == 'nan' or child_sites_str == '':
-        child_list = []
-    else:
-        child_list = [x.strip().upper() for x in str(child_sites_str).split(',')]
+# --- 2. LOGIC KALKULASI (UPDATED MULTIPLE PARENTS) ---
+def calculate_loss(df, parent_sites, mapping):
+    all_related_sites = set()
     
-    all_related_sites = list(set([site_id] + child_list))
+    # Kumpulin semua parent dan anakannya jadi satu set
+    for site_id in parent_sites:
+        child_sites_str = mapping.get(site_id, '')
+        if pd.isna(child_sites_str) or child_sites_str == 'nan' or child_sites_str == '':
+            child_list = []
+        else:
+            child_list = [x.strip().upper() for x in str(child_sites_str).split(',')]
+        
+        all_related_sites.add(site_id)
+        all_related_sites.update(child_list)
+    
     filtered_df = df[df['Site_ID'].isin(all_related_sites)].copy()
     
     if filtered_df.empty:
@@ -147,7 +153,8 @@ def calculate_loss(df, site_id, mapping):
     filtered_df['Availability_Pct'] = filtered_df['Availability'] * 100
     filtered_df['Packet_Loss_Pct'] = filtered_df['Packet_Loss'] * 100
     
-    filtered_df['Keterangan'] = filtered_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x == site_id else 'Anakan (Child)')
+    # Kasih label Induk/Anakan sesuai list parent_sites
+    filtered_df['Keterangan'] = filtered_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_sites else 'Anakan (Child)')
     
     return filtered_df
 
@@ -232,8 +239,9 @@ if len(file_rev) > 0 and len(file_avail) > 0:
         
         with col_f1:
             all_sites = sorted(df_merged['Site_ID'].dropna().unique().tolist())
-            dropdown_options = ["-- Pilih Site --"] + [f"{site} - {name_mapping.get(site, 'Unknown')}" for site in all_sites]
-            search_site_selection = st.selectbox("🔍 Cari & Pilih Site Induk:", options=dropdown_options)
+            dropdown_options = [f"{site} - {name_mapping.get(site, 'Unknown')}" for site in all_sites]
+            # UBAH JADI MULTISELECT BIAR BISA PILIH LEBIH DARI 1 INDUK
+            search_sites_selection = st.multiselect("🔍 Cari & Pilih Site Induk (Bisa lebih dari 1):", options=dropdown_options)
             
         with col_f2:
             min_date = df_merged['Date'].min()
@@ -245,8 +253,8 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 max_value=max_date
             )
 
-        if search_site_selection != "-- Pilih Site --":
-            search_site = search_site_selection.split(" - ")[0]
+        if search_sites_selection: # Jalanin kodenya cuma kalau ada minimal 1 site kepilih
+            selected_parents = [s.split(" - ")[0] for s in search_sites_selection]
             
             if len(selected_dates) == 2:
                 start_date, end_date = selected_dates
@@ -255,10 +263,11 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 
             df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)]
             
-            impact_df = calculate_loss(df_periode, search_site, site_mapping)
+            # Panggil fungsi yang udah dimodif
+            impact_df = calculate_loss(df_periode, selected_parents, site_mapping)
             
             if impact_df.empty:
-                st.warning(f"Data untuk Site {search_site} gak ketemu di rentang tanggal tersebut.")
+                st.warning("⚠️ Data untuk Site yang dipilih tidak ditemukan di rentang tanggal tersebut.")
             else:
                 if not df_dapot.empty:
                     dapot_cols = ['Site ID', 'SITE NAME', 'SITE CLASS', 'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site']
@@ -273,8 +282,9 @@ if len(file_rev) > 0 and len(file_avail) > 0:
                 list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
                 opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
                 
+                # Fitur milih spesifik anakannya (ini otomatis ngikut sesuai induk yang dipilih di atas)
                 fokus_site_selection = st.multiselect(
-                    "🎯 Pilih Spesifik Site (Bisa lebih dari satu):", 
+                    "🎯 Pilih Spesifik Site (Induk/Anakan) yang Ingin Dianalisis:", 
                     options=opsi_fokus, 
                     default=opsi_fokus
                 )
@@ -510,7 +520,7 @@ if len(file_rev) > 0 and len(file_avail) > 0:
     except Exception as e:
         st.error(f"Gagal memproses file. Pastikan format kolom sama. Error: {e}")
 
-# --- FOOTER HAK CIPTA STATIS (NON-STICKY) ---
+# --- FOOTER HAK CIPTA STATIS ---
 st.markdown("""
 <div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">
     © 2026 | Created with ❤️ by Fauzi Ramdani - 97122
