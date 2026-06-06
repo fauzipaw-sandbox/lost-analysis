@@ -47,27 +47,30 @@ def clean_column_names(df):
 
 # --- 1. FITUR UPLOAD & PUSH KE DATABASE (TERSEMBUNYI DI EXPANDER) ---
 with st.expander("⚙️ Update Data ke Database (Khusus Admin/Upload CSV)"):
-    st.info("Upload file data terbaru di sini. Data akan otomatis dibersihkan dan disimpan permanen ke Supabase.")
-    col_up1, col_up2 = st.columns(2)
+    st.info("Upload file data terbaru di sini. Data otomatis dibersihkan dan disimpan permanen ke Supabase.")
+    
+    # Bikin jadi 3 kolom biar Dapot punya tempat sendiri
+    col_up1, col_up2, col_up3 = st.columns(3)
     with col_up1:
-        file_rev = st.file_uploader("📂 Upload Data Revenue", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+        file_rev = st.file_uploader("📂 1. Data Revenue", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
     with col_up2:
-        file_avail = st.file_uploader("📂 Upload Data Availability", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+        file_avail = st.file_uploader("📂 2. Data Availability", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+    with col_up3:
+        # Dapot cukup single file aja
+        file_dapot = st.file_uploader("📂 3. Data Dapot (Master Site)", type=["csv", "xlsx", "xls"])
     
     if st.button("💾 Simpan ke Database Supabase", type="primary"):
-        if len(file_rev) > 0 and len(file_avail) > 0:
-            with st.spinner("Membersihkan data dan mengirim ke Cloud Database..."):
-                try:
-                    # PROSES REVENUE
-                    dfs_rev = []
-                    for f in file_rev:
-                        df_temp = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
-                        dfs_rev.append(df_temp)
+        with st.spinner("Membersihkan data dan mengirim ke Cloud Database..."):
+            try:
+                # --- PROSES REVENUE ---
+                if len(file_rev) > 0:
+                    dfs_rev = [pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f) for f in file_rev]
                     df_rev_upload = pd.concat(dfs_rev, ignore_index=True)
                     df_rev_upload.columns = clean_column_names(df_rev_upload)
                     df_rev_upload.to_sql('revenue_data', engine, if_exists='replace', index=False)
-                    
-                    # PROSES AVAILABILITY
+                
+                # --- PROSES AVAILABILITY ---
+                if len(file_avail) > 0:
                     dfs_avail = []
                     for f in file_avail:
                         if f.name.endswith('.csv'):
@@ -85,31 +88,50 @@ with st.expander("⚙️ Update Data ke Database (Khusus Admin/Upload CSV)"):
                     df_avail_upload = pd.concat(dfs_avail, ignore_index=True)
                     df_avail_upload.columns = clean_column_names(df_avail_upload)
                     df_avail_upload.to_sql('availability_data', engine, if_exists='replace', index=False)
-                    
-                    st.success("✅ Yeaay! Data sukses masuk ke Supabase.")
-                    st.cache_data.clear() # Reset cache biar narik data fresh
-                    st.rerun() # Auto refresh halaman
-                except Exception as e:
-                    st.error(f"Gagal push ke database: {e}")
-        else:
-            st.warning("⚠️ Masukin kedua jenis file (Revenue & Availability) dulu bos!")
 
-st.divider()
+                # --- PROSES DAPOT (TANPA FILTER PALANGKARAYA) ---
+                if file_dapot is not None:
+                    df_dapot_upload = pd.read_csv(file_dapot) if file_dapot.name.endswith('.csv') else pd.read_excel(file_dapot, engine="openpyxl")
+                    df_dapot_upload.columns = clean_column_names(df_dapot_upload)
+                    df_dapot_upload.to_sql('dapot_data', engine, if_exists='replace', index=False)
+                
+                st.success("✅ Yeaay! Data sukses diupdate ke Supabase.")
+                st.cache_data.clear() # Reset cache
+                st.rerun() # Auto refresh halaman
+            except Exception as e:
+                st.error(f"Gagal push ke database: {e}")
 
-# --- 2. LOAD MAPPING SITE DAPOT ---
-@st.cache_data
+# --- 2. LOAD MAPPING SITE DAPOT DARI SUPABASE ---
+@st.cache_data(ttl="1h")
 def load_dapot():
     try:
-        df_dapot = pd.read_excel("Dapot site kalimantan.xlsx", engine="openpyxl")
-        df_dapot = df_dapot[df_dapot['DEPARTEMEN'].astype(str).str.contains('NOP PALANGKARAYA', case=False, na=False)]
-        df_dapot['Site ID'] = df_dapot['Site ID'].astype(str).str.strip().str.upper()
+        # Tarik data dapot yang udah lo push ke Supabase
+        df_dapot = conn.query("SELECT * FROM dapot_data;", ttl="1h")
+        
+        # Pastiin kolom site ID bersih dan huruf besar
+        if 'site_id' in df_dapot.columns:
+            df_dapot['site_id'] = df_dapot['site_id'].astype(str).str.strip().str.upper()
         return df_dapot
     except Exception as e:
         return pd.DataFrame()
 
 df_dapot = load_dapot()
-site_mapping = dict(zip(df_dapot['Site ID'], df_dapot['Site Id Anakan'].astype(str))) if not df_dapot.empty else {}
-name_mapping = dict(zip(df_dapot['Site ID'], df_dapot['SITE NAME'].astype(str))) if not df_dapot.empty else {}
+
+# Mapping relasi Induk-Anakan pakai data dari database
+if not df_dapot.empty:
+    # Cari kolom anakan (karena spasi udah diganti underscore, namanya mungkin beda dikit)
+    col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower()][0] if any('anakan' in c.lower() for c in df_dapot.columns) else None
+    
+    if col_anakan:
+        site_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_anakan].astype(str)))
+    else:
+        site_mapping = {}
+        
+    col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
+    name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
+else:
+    site_mapping = {}
+    name_mapping = {}
 
 # --- 3. AUTO-LOAD DATA DARI SUPABASE ---
 try:
@@ -218,9 +240,14 @@ if search_sites_selection:
     if impact_df.empty:
         st.warning("⚠️ Data untuk Site yang dipilih tidak ditemukan di rentang tanggal tersebut.")
     else:
+        # GANTI BAGIAN DAPOT COLS JADI INI:
         if not df_dapot.empty:
-            dapot_cols = [c for c in ['Site ID', 'SITE NAME', 'SITE CLASS', 'Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site'] if c in df_dapot.columns]
-            impact_df = pd.merge(impact_df, df_dapot[dapot_cols], left_on='Site_ID', right_on='Site ID', how='left')
+            dapot_cols = ['site_id', 'site_name', 'site_class', 'kotakab', 'kecamatan', 'pln__non_pln', 'power_classification', 'power_type', 'site_simpul', 'grid_category_new', 'hub_site']
+            # Cek kolom apa aja yang beneran sukses masuk database
+            dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
+            
+            # PENTING: right_on sekarang pake huruf kecil 'site_id'
+            impact_df = pd.merge(impact_df, df_dapot[dapot_cols], left_on='Site_ID', right_on='site_id', how='left')
         
         st.write("---")
         list_site_terlibat = sorted(impact_df['Site_ID'].unique().tolist())
