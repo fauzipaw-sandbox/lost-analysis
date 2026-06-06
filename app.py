@@ -138,8 +138,15 @@ try:
         time_col_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
         df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], format='mixed').dt.date
         
-        site_col_avail = [c for c in df_avail.columns if 'element' in c.lower() or 'site' in c.lower()][0]
-        df_avail['Site_ID'] = df_avail[site_col_avail].astype(str).str.extract(r'([A-Z]{3}\d{3})')
+        # --- PERBAIKAN: CARI KOLOM SITE ID AVAILABILITY ---
+        # Kita kunci spesifik ke 'managed_element' biar ga ketuker sama 'id' angka
+        if 'managed_element' in df_avail.columns:
+            df_avail['Site_ID'] = df_avail['managed_element'].astype(str).str.extract(r'([A-Z]{3}\d{3})')
+        else:
+            # Fallback kalau namanya beda, hindari kolom yang ada kata 'id'
+            site_col_avail_list = [c for c in df_avail.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()]
+            site_col_avail = site_col_avail_list[0] if site_col_avail_list else df_avail.columns[0]
+            df_avail['Site_ID'] = df_avail[site_col_avail].astype(str).str.extract(r'([A-Z]{3}\d{3})')
         
         avail_cols = [c for c in df_avail.columns if 'availability' in c.lower() or 'avail' in c.lower()]
         if avail_cols:
