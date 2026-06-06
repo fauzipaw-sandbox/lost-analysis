@@ -57,18 +57,18 @@ with st.expander("⚙️ Update Data Harian / Master"):
         file_dapot = st.file_uploader("📂 3. Data Dapot Master", type=["csv", "xlsx", "xls"])
     
     if st.button("💾 Simpan Data", type="primary"):
-        with st.spinner("Memproses dan menyimpan data..."):
+        with st.spinner("Memproses dan menyimpan data... (Ini mungkin memakan waktu untuk data besar)"):
             try:
-                # PROSES REVENUE (APPEND - TANPA TRUNCATE)
+                # PROSES REVENUE (SATU PER SATU BIAR HEMAT RAM)
                 if len(file_rev) > 0:
-                    dfs_rev = [pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f) for f in file_rev]
-                    df_rev_upload = pd.concat(dfs_rev, ignore_index=True)
-                    df_rev_upload.columns = clean_column_names(df_rev_upload)
-                    df_rev_upload.to_sql('revenue_data', engine, if_exists='append', index=False)
+                    for f in file_rev:
+                        df_temp = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
+                        df_temp.columns = clean_column_names(df_temp)
+                        # chunksize=5000 biar kirimnya dicicil, database ga keselek
+                        df_temp.to_sql('revenue_data', engine, if_exists='append', index=False, chunksize=5000)
                 
-                # PROSES AVAILABILITY (APPEND - TANPA TRUNCATE)
+                # PROSES AVAILABILITY (SATU PER SATU BIAR HEMAT RAM)
                 if len(file_avail) > 0:
-                    dfs_avail = []
                     for f in file_avail:
                         if f.name.endswith('.csv'):
                             df_temp = pd.read_csv(f)
@@ -81,10 +81,9 @@ with st.expander("⚙️ Update Data Harian / Master"):
                                     sheet_target = sheet
                                     break
                             df_temp = pd.read_excel(xls_avail, sheet_name=sheet_target)
-                        dfs_avail.append(df_temp)
-                    df_avail_upload = pd.concat(dfs_avail, ignore_index=True)
-                    df_avail_upload.columns = clean_column_names(df_avail_upload)
-                    df_avail_upload.to_sql('availability_data', engine, if_exists='append', index=False)
+                        
+                        df_temp.columns = clean_column_names(df_temp)
+                        df_temp.to_sql('availability_data', engine, if_exists='append', index=False, chunksize=5000)
 
                 # PROSES DAPOT (TETAP TRUNCATE KARENA INI MASTER DATA)
                 if file_dapot is not None:
@@ -95,13 +94,13 @@ with st.expander("⚙️ Update Data Harian / Master"):
                             con.execute(text("TRUNCATE TABLE dapot_data;"))
                             con.commit()
                         except: pass
-                    df_dapot_upload.to_sql('dapot_data', engine, if_exists='append', index=False)
+                    df_dapot_upload.to_sql('dapot_data', engine, if_exists='append', index=False, chunksize=5000)
                 
                 st.success("✅ Data berhasil diperbarui!")
                 st.cache_data.clear() 
                 st.rerun() 
             except Exception as e:
-                st.error("Gagal memproses data. Pastikan format file sudah benar.")
+                st.error("Gagal memproses data. Pastikan format file sudah benar atau coba upload dalam jumlah yang lebih kecil.")
 
 st.divider()
 
@@ -137,7 +136,6 @@ try:
             st.warning("Data sistem masih kosong. Gunakan menu 'Update Data Master' di atas untuk inisiasi awal.")
             st.stop()
             
-        # PENCARIAN KOLOM TANGGAL LEBIH AKURAT
         date_cols_rev = [c for c in df_rev.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()]
         date_col_rev = date_cols_rev[0] if date_cols_rev else df_rev.columns[0]
         df_rev['Date'] = pd.to_datetime(df_rev[date_col_rev], errors='coerce').dt.date
@@ -151,7 +149,6 @@ try:
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
         df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024
         
-        # Tanggal Availability
         time_cols_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()]
         time_col_avail = time_cols_avail[0] if time_cols_avail else df_avail.columns[0]
         df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], errors='coerce').dt.date
@@ -173,11 +170,9 @@ try:
             df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
             df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
 
-        # MENGHAPUS DUPLIKAT DATA JIKA UPLOAD FILE YANG SAMA BERKALI-KALI (Ambil data paling baru)
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
 
-        # OUTER JOIN AGAR DATA TANGGAL YANG KOSONG DI SALAH SATU TABEL TETAP MUNCUL
         df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='outer')
         
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
