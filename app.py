@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import os
 import io
+from sqlalchemy import text
 
 st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 
@@ -30,9 +31,9 @@ with col_logo:
     if os.path.exists("logo.png"): st.image("logo.png", width=60)
     else: st.markdown("<h1 style='margin-top: -15px; color: #EC2028; text-align: right;'>🔴</h1>", unsafe_allow_html=True)
 
-st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site secara real-time dari Database.")
+st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site secara real-time.")
 
-# --- KONEKSI KE DATABASE INTERNAL ---
+# --- KONEKSI SISTEM (DISAMARKAN) ---
 conn = st.connection("supabase", type="sql")
 engine = conn.engine
 
@@ -43,9 +44,9 @@ def clean_column_names(df):
     cols = cols.str.replace(r'[^a-zA-Z0-9_]', '', regex=True)
     return cols
 
-# --- 1. FITUR UPLOAD & PUSH KE DATABASE (TERSEMBUNYI) ---
-with st.expander("⚙️ Update Data ke Server (Khusus Admin)"):
-    st.info("Upload file data terbaru di sini. Data otomatis dibersihkan dan disimpan permanen ke Cloud Database Utama.")
+# --- 1. FITUR UPLOAD (UI GENERIK) ---
+with st.expander("⚙️ Update Data Master"):
+    st.info("Silakan upload file data terbaru di sini untuk memperbarui sistem.")
     
     col_up1, col_up2, col_up3 = st.columns(3)
     with col_up1:
@@ -55,15 +56,22 @@ with st.expander("⚙️ Update Data ke Server (Khusus Admin)"):
     with col_up3:
         file_dapot = st.file_uploader("📂 3. Data Dapot Master", type=["csv", "xlsx", "xls"])
     
-    if st.button("💾 Simpan Data ke Server", type="primary"):
-        with st.spinner("Membersihkan data dan menyinkronkan ke Cloud Database..."):
+    if st.button("💾 Simpan Data", type="primary"):
+        with st.spinner("Memproses dan menyimpan data..."):
             try:
+                # PROSES REVENUE
                 if len(file_rev) > 0:
                     dfs_rev = [pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f) for f in file_rev]
                     df_rev_upload = pd.concat(dfs_rev, ignore_index=True)
                     df_rev_upload.columns = clean_column_names(df_rev_upload)
-                    df_rev_upload.to_sql('revenue_data', engine, if_exists='replace', index=False)
+                    with engine.connect() as con:
+                        try:
+                            con.execute(text("TRUNCATE TABLE revenue_data;"))
+                            con.commit()
+                        except: pass
+                    df_rev_upload.to_sql('revenue_data', engine, if_exists='append', index=False)
                 
+                # PROSES AVAILABILITY
                 if len(file_avail) > 0:
                     dfs_avail = []
                     for f in file_avail:
@@ -81,22 +89,33 @@ with st.expander("⚙️ Update Data ke Server (Khusus Admin)"):
                         dfs_avail.append(df_temp)
                     df_avail_upload = pd.concat(dfs_avail, ignore_index=True)
                     df_avail_upload.columns = clean_column_names(df_avail_upload)
-                    df_avail_upload.to_sql('availability_data', engine, if_exists='replace', index=False)
+                    with engine.connect() as con:
+                        try:
+                            con.execute(text("TRUNCATE TABLE availability_data;"))
+                            con.commit()
+                        except: pass
+                    df_avail_upload.to_sql('availability_data', engine, if_exists='append', index=False)
 
+                # PROSES DAPOT
                 if file_dapot is not None:
                     df_dapot_upload = pd.read_csv(file_dapot) if file_dapot.name.endswith('.csv') else pd.read_excel(file_dapot, engine="openpyxl")
                     df_dapot_upload.columns = clean_column_names(df_dapot_upload)
-                    df_dapot_upload.to_sql('dapot_data', engine, if_exists='replace', index=False)
+                    with engine.connect() as con:
+                        try:
+                            con.execute(text("TRUNCATE TABLE dapot_data;"))
+                            con.commit()
+                        except: pass
+                    df_dapot_upload.to_sql('dapot_data', engine, if_exists='append', index=False)
                 
-                st.success("✅ Sinkronisasi berhasil! Server telah diperbarui.")
+                st.success("✅ Data berhasil diperbarui!")
                 st.cache_data.clear() 
                 st.rerun() 
             except Exception as e:
-                st.error("Gagal memperbarui server database. Periksa format file.")
+                st.error("Gagal memproses data. Pastikan format file sudah benar.")
 
 st.divider()
 
-# --- 2. LOAD MAPPING SITE DAPOT DARI DATABASE ---
+# --- 2. LOAD MAPPING SITE DAPOT ---
 @st.cache_data(ttl="1h")
 def load_dapot():
     try:
@@ -118,14 +137,14 @@ else:
     site_mapping = {}
     name_mapping = {}
 
-# --- 3. AUTO-LOAD DATA DARI DATABASE ---
+# --- 3. AUTO-LOAD DATA SISTEM ---
 try:
-    with st.spinner("Mengambil data terbaru dari Cloud Server..."):
+    with st.spinner("Memuat data sistem..."):
         df_rev = conn.query("SELECT * FROM revenue_data", ttl="10m")
         df_avail = conn.query("SELECT * FROM availability_data", ttl="10m")
         
         if df_rev.empty or df_avail.empty:
-            st.warning("Server database masih kosong. Gunakan menu 'Update Data' di atas untuk sinkronisasi awal.")
+            st.warning("Data sistem masih kosong. Gunakan menu 'Update Data Master' di atas untuk inisiasi awal.")
             st.stop()
             
         date_col_rev = [c for c in df_rev.columns if 'date' in c.lower()][0]
@@ -166,11 +185,10 @@ try:
         df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='left')
 
         if not df_dapot.empty:
-            # FIX BUG DISINI: Ganti 'Site ID' jadi 'site_id' biar nggak KeyError lagi
             df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
 
 except Exception as e:
-    st.error("Gagal terhubung ke Cloud Database. Pastikan server aktif.")
+    st.error("Gagal memuat data sistem.")
     st.stop()
 
 # --- 4. LOGIC KALKULASI & UI DASHBOARD ---
@@ -224,7 +242,6 @@ if search_sites_selection:
         if not df_dapot.empty:
             dapot_cols = ['site_id', 'site_name', 'site_class', 'kotakab', 'kecamatan', 'pln__non_pln', 'power_classification', 'power_type', 'site_simpul', 'grid_category_new', 'hub_site']
             dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
-            # FIX BUG MERGE: right_on pake 'site_id'
             impact_df = pd.merge(impact_df, df_dapot[dapot_cols], left_on='Site_ID', right_on='site_id', how='left')
         
         st.write("---")
