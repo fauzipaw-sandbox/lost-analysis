@@ -182,11 +182,23 @@ try:
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'])
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'])
 
-        df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='left')
+        # --- PERBAIKAN MERGE (OUTER JOIN) BIAR DATA LAMA GAK HILANG ---
+        df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='outer')
+        
+        # Karena outer join, data yang kosong (misal revenue ada tapi avail ga ada, atau sebaliknya) kita isi nilai default (0 atau 100%)
+        df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
+        df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
+        
+        # Buang baris yang tanggalnya error/NaT
+        df_merged = df_merged.dropna(subset=['Date'])
 
-        if not df_dapot.empty:
-            df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
-
+        # --- PERBAIKAN FILTER DAPOT ---
+        # Kalau lo pengen historis site lama tetep muncul walau site-nya udah ga ada di Dapot baru, 
+        # filter ini kita matikan saja (dikasih comment '#' di depannya):
+        # if not df_dapot.empty:
+        #     df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
 except Exception as e:
     st.error("Gagal memuat data sistem.")
     st.stop()
