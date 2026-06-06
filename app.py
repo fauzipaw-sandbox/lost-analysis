@@ -147,8 +147,16 @@ try:
             st.warning("Data sistem masih kosong. Gunakan menu 'Update Data Master' di atas untuk inisiasi awal.")
             st.stop()
             
-        date_col_rev = [c for c in df_rev.columns if 'date' in c.lower()][0]
-        df_rev['Date'] = pd.to_datetime(df_rev[date_col_rev], format='mixed').dt.date
+        # 🛠️ DEBUG MODE: Buka expander ini di web buat ngecek raw data lo!
+        with st.expander("🛠️ DEBUG: Cek Data Mentah Database"):
+            st.write("Tabel Revenue Asli:", df_rev.head())
+            st.write("Tabel Availability Asli:", df_avail.head())
+            
+        # --- PERBAIKAN 1: PENCARIAN KOLOM TANGGAL LEBIH AKURAT ---
+        date_cols_rev = [c for c in df_rev.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()]
+        date_col_rev = date_cols_rev[0] if date_cols_rev else df_rev.columns[0]
+        # Pake errors='coerce' biar ga error kalau ada teks nyasar
+        df_rev['Date'] = pd.to_datetime(df_rev[date_col_rev], errors='coerce').dt.date
         
         site_col_rev = [c for c in df_rev.columns if 'site' in c.lower()][0]
         df_rev['Site_ID'] = df_rev[site_col_rev].astype(str).str.strip().str.upper()
@@ -159,8 +167,10 @@ try:
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
         df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024
         
-        time_col_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
-        df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], format='mixed').dt.date
+        # Tanggal Availability
+        time_cols_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()]
+        time_col_avail = time_cols_avail[0] if time_cols_avail else df_avail.columns[0]
+        df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], errors='coerce').dt.date
         
         if 'managed_element' in df_avail.columns:
             df_avail['Site_ID'] = df_avail['managed_element'].astype(str).str.extract(r'([A-Z]{3}\d{3})')
@@ -182,23 +192,21 @@ try:
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'])
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'])
 
-        # --- PERBAIKAN MERGE (OUTER JOIN) BIAR DATA LAMA GAK HILANG ---
+        # --- PERBAIKAN 2: PAKE OUTER JOIN! ---
+        # Ini biar kalau salah satu data bolong di bulan tertentu, bulan itu tetep nongol
         df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='outer')
         
-        # Karena outer join, data yang kosong (misal revenue ada tapi avail ga ada, atau sebaliknya) kita isi nilai default (0 atau 100%)
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
         df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
         
-        # Buang baris yang tanggalnya error/NaT
+        # Buang yang tanggalnya gak jelas/error
         df_merged = df_merged.dropna(subset=['Date'])
 
-        # --- PERBAIKAN FILTER DAPOT ---
-        # Kalau lo pengen historis site lama tetep muncul walau site-nya udah ga ada di Dapot baru, 
-        # filter ini kita matikan saja (dikasih comment '#' di depannya):
-        # if not df_dapot.empty:
-        #     df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
+        # Filter Dapot tetap jalan biar site Kalimantan aja yang masuk
+        if not df_dapot.empty:
+            df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
 except Exception as e:
     st.error("Gagal memuat data sistem.")
     st.stop()
