@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import re
+import io
 
 st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 
@@ -19,8 +19,6 @@ st.markdown("""
     [data-testid="column"]:nth-child(3) [data-testid="stMetric"] { border-left: 5px solid #0056b3 !important; }
     [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"] { color: #0056b3 !important; }
     [data-testid="stFileUploadDropzone"] { border: 2px dashed #EC2028; border-radius: 10px; background-color: #FCF4F4; }
-    .footer { position: fixed; bottom: 0; left: 0; width: 100%; background-color: rgba(255, 255, 255, 0.95); border-top: 1px solid #eaeaea; text-align: center; padding: 12px 0; font-size: 14px; color: #888888; z-index: 999; }
-    .block-container { padding-bottom: 80px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -34,42 +32,38 @@ with col_logo:
 
 st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site secara real-time dari Database.")
 
-# --- KONEKSI KE SUPABASE ---
+# --- KONEKSI KE DATABASE INTERNAL ---
 conn = st.connection("supabase", type="sql")
 engine = conn.engine
 
-# --- FUNGSI PEMBERSIH NAMA KOLOM (FIX BUG DUPLIKAT POWER BI) ---
+# --- FUNGSI PEMBERSIH NAMA KOLOM ---
 def clean_column_names(df):
     cols = df.columns.astype(str).str.lower()
     cols = cols.str.replace(' ', '_')
     cols = cols.str.replace(r'[^a-zA-Z0-9_]', '', regex=True)
     return cols
 
-# --- 1. FITUR UPLOAD & PUSH KE DATABASE (TERSEMBUNYI DI EXPANDER) ---
-with st.expander("⚙️ Update Data ke Database (Khusus Admin/Upload CSV)"):
-    st.info("Upload file data terbaru di sini. Data otomatis dibersihkan dan disimpan permanen ke Supabase.")
+# --- 1. FITUR UPLOAD & PUSH KE DATABASE (TERSEMBUNYI) ---
+with st.expander("⚙️ Update Data ke Server (Khusus Admin)"):
+    st.info("Upload file data terbaru di sini. Data otomatis dibersihkan dan disimpan permanen ke Cloud Database Utama.")
     
-    # Bikin jadi 3 kolom biar Dapot punya tempat sendiri
     col_up1, col_up2, col_up3 = st.columns(3)
     with col_up1:
         file_rev = st.file_uploader("📂 1. Data Revenue", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
     with col_up2:
         file_avail = st.file_uploader("📂 2. Data Availability", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
     with col_up3:
-        # Dapot cukup single file aja
-        file_dapot = st.file_uploader("📂 3. Data Dapot (Master Site)", type=["csv", "xlsx", "xls"])
+        file_dapot = st.file_uploader("📂 3. Data Dapot Master", type=["csv", "xlsx", "xls"])
     
-    if st.button("💾 Simpan ke Database Supabase", type="primary"):
-        with st.spinner("Membersihkan data dan mengirim ke Cloud Database..."):
+    if st.button("💾 Simpan Data ke Server", type="primary"):
+        with st.spinner("Membersihkan data dan menyinkronkan ke Cloud Database..."):
             try:
-                # --- PROSES REVENUE ---
                 if len(file_rev) > 0:
                     dfs_rev = [pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f) for f in file_rev]
                     df_rev_upload = pd.concat(dfs_rev, ignore_index=True)
                     df_rev_upload.columns = clean_column_names(df_rev_upload)
                     df_rev_upload.to_sql('revenue_data', engine, if_exists='replace', index=False)
                 
-                # --- PROSES AVAILABILITY ---
                 if len(file_avail) > 0:
                     dfs_avail = []
                     for f in file_avail:
@@ -89,26 +83,24 @@ with st.expander("⚙️ Update Data ke Database (Khusus Admin/Upload CSV)"):
                     df_avail_upload.columns = clean_column_names(df_avail_upload)
                     df_avail_upload.to_sql('availability_data', engine, if_exists='replace', index=False)
 
-                # --- PROSES DAPOT (TANPA FILTER PALANGKARAYA) ---
                 if file_dapot is not None:
                     df_dapot_upload = pd.read_csv(file_dapot) if file_dapot.name.endswith('.csv') else pd.read_excel(file_dapot, engine="openpyxl")
                     df_dapot_upload.columns = clean_column_names(df_dapot_upload)
                     df_dapot_upload.to_sql('dapot_data', engine, if_exists='replace', index=False)
                 
-                st.success("✅ Yeaay! Data sukses diupdate ke Supabase.")
-                st.cache_data.clear() # Reset cache
-                st.rerun() # Auto refresh halaman
+                st.success("✅ Sinkronisasi berhasil! Server telah diperbarui.")
+                st.cache_data.clear() 
+                st.rerun() 
             except Exception as e:
-                st.error(f"Gagal push ke database: {e}")
+                st.error("Gagal memperbarui server database. Periksa format file.")
 
-# --- 2. LOAD MAPPING SITE DAPOT DARI SUPABASE ---
+st.divider()
+
+# --- 2. LOAD MAPPING SITE DAPOT DARI DATABASE ---
 @st.cache_data(ttl="1h")
 def load_dapot():
     try:
-        # Tarik data dapot yang udah lo push ke Supabase
         df_dapot = conn.query("SELECT * FROM dapot_data;", ttl="1h")
-        
-        # Pastiin kolom site ID bersih dan huruf besar
         if 'site_id' in df_dapot.columns:
             df_dapot['site_id'] = df_dapot['site_id'].astype(str).str.strip().str.upper()
         return df_dapot
@@ -117,33 +109,25 @@ def load_dapot():
 
 df_dapot = load_dapot()
 
-# Mapping relasi Induk-Anakan pakai data dari database
 if not df_dapot.empty:
-    # Cari kolom anakan (karena spasi udah diganti underscore, namanya mungkin beda dikit)
     col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower()][0] if any('anakan' in c.lower() for c in df_dapot.columns) else None
-    
-    if col_anakan:
-        site_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_anakan].astype(str)))
-    else:
-        site_mapping = {}
-        
+    site_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_anakan].astype(str))) if col_anakan else {}
     col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
     name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
 else:
     site_mapping = {}
     name_mapping = {}
 
-# --- 3. AUTO-LOAD DATA DARI SUPABASE ---
+# --- 3. AUTO-LOAD DATA DARI DATABASE ---
 try:
-    with st.spinner("Memuat data dari Supabase..."):
+    with st.spinner("Mengambil data terbaru dari Cloud Server..."):
         df_rev = conn.query("SELECT * FROM revenue_data", ttl="10m")
         df_avail = conn.query("SELECT * FROM availability_data", ttl="10m")
         
         if df_rev.empty or df_avail.empty:
-            st.warning("Database masih kosong. Buka menu 'Update Data' di atas untuk upload file pertama kali!")
+            st.warning("Server database masih kosong. Gunakan menu 'Update Data' di atas untuk sinkronisasi awal.")
             st.stop()
             
-        # PREPROCESSING DARI DATABASE
         date_col_rev = [c for c in df_rev.columns if 'date' in c.lower()][0]
         df_rev['Date'] = pd.to_datetime(df_rev[date_col_rev], format='mixed').dt.date
         
@@ -152,7 +136,6 @@ try:
         
         rev_col = [c for c in df_rev.columns if 'revenue' in c.lower()][0]
         payload_col = [c for c in df_rev.columns if 'payload' in c.lower()][0]
-        
         df_rev.rename(columns={rev_col: 'Actual_Revenue', payload_col: 'Actual_Payload'}, inplace=True)
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
         df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024
@@ -160,12 +143,9 @@ try:
         time_col_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
         df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], format='mixed').dt.date
         
-        # --- PERBAIKAN: CARI KOLOM SITE ID AVAILABILITY ---
-        # Kita kunci spesifik ke 'managed_element' biar ga ketuker sama 'id' angka
         if 'managed_element' in df_avail.columns:
             df_avail['Site_ID'] = df_avail['managed_element'].astype(str).str.extract(r'([A-Z]{3}\d{3})')
         else:
-            # Fallback kalau namanya beda, hindari kolom yang ada kata 'id'
             site_col_avail_list = [c for c in df_avail.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()]
             site_col_avail = site_col_avail_list[0] if site_col_avail_list else df_avail.columns[0]
             df_avail['Site_ID'] = df_avail[site_col_avail].astype(str).str.extract(r'([A-Z]{3}\d{3})')
@@ -186,10 +166,11 @@ try:
         df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='left')
 
         if not df_dapot.empty:
-            df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['Site ID'])]
+            # FIX BUG DISINI: Ganti 'Site ID' jadi 'site_id' biar nggak KeyError lagi
+            df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
 
 except Exception as e:
-    st.error(f"Tabel database belum tersedia atau koneksi gagal. Silakan upload data dulu di menu atas. Error: {e}")
+    st.error("Gagal terhubung ke Cloud Database. Pastikan server aktif.")
     st.stop()
 
 # --- 4. LOGIC KALKULASI & UI DASHBOARD ---
@@ -218,7 +199,7 @@ def calculate_loss(df, parent_sites, mapping):
     
     return filtered_df
 
-st.write("### ⚙️ Filter Analisis")
+st.write("### ⚙️ Filter Analisis Site (Kalimantan)")
 col_f1, col_f2 = st.columns(2)
 
 with col_f1:
@@ -240,13 +221,10 @@ if search_sites_selection:
     if impact_df.empty:
         st.warning("⚠️ Data untuk Site yang dipilih tidak ditemukan di rentang tanggal tersebut.")
     else:
-        # GANTI BAGIAN DAPOT COLS JADI INI:
         if not df_dapot.empty:
             dapot_cols = ['site_id', 'site_name', 'site_class', 'kotakab', 'kecamatan', 'pln__non_pln', 'power_classification', 'power_type', 'site_simpul', 'grid_category_new', 'hub_site']
-            # Cek kolom apa aja yang beneran sukses masuk database
             dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
-            
-            # PENTING: right_on sekarang pake huruf kecil 'site_id'
+            # FIX BUG MERGE: right_on pake 'site_id'
             impact_df = pd.merge(impact_df, df_dapot[dapot_cols], left_on='Site_ID', right_on='site_id', how='left')
         
         st.write("---")
@@ -331,7 +309,7 @@ if search_sites_selection:
             st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
             
             base_cols = ['Date', 'Site_ID', 'SITE NAME', 'Keterangan', 'SITE CLASS', 'Availability', 'Packet_Loss', 'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Potential_Payload', 'Lost_Payload', 'Actual_Payload']
-            extra_cols = ['Kota/Kab', 'Kecamatan', 'PLN / NON PLN', 'POWER CLASSIFICATION', 'POWER TYPE', 'SITE SIMPUL', 'Grid Category New', 'Hub site']
+            extra_cols = ['kotakab', 'kecamatan', 'pln__non_pln', 'power_classification', 'power_type', 'site_simpul', 'grid_category_new', 'hub_site']
             base_cols = [c for c in base_cols if c in impact_df.columns]
             extra_cols = [c for c in extra_cols if c in impact_df.columns]
             
@@ -339,10 +317,9 @@ if search_sites_selection:
             with col_t1:
                 display_cols = base_cols + extra_cols if st.toggle("🔍 Tampilkan Kolom Detail Ekstra (Expand)") else base_cols
             with col_t2:
-                import io
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    impact_df.drop(columns=['Site ID'], errors='ignore').to_excel(writer, index=False, sheet_name='Data_Loss')
+                    impact_df.drop(columns=['site_id'], errors='ignore').to_excel(writer, index=False, sheet_name='Data_Loss')
                 st.download_button("📥 Download Full Data (Excel)", data=buffer.getvalue(), file_name="Data_Loss_Impact_Full.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
             def get_red_maroon_style(ratio):
