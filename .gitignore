@@ -1,2 +1,3 @@
 .streamlit/
 pycache/
+.streamlit/secrets.toml
