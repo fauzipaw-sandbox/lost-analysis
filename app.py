@@ -182,7 +182,7 @@ try:
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
-        # GABUNGKAN SEMUA INFO DARI DAPOT (NOP, KAB, KEC, DLL)
+        # GABUNGKAN SEMUA INFO DARI DAPOT
         if not df_dapot.empty:
             dept_col = [c for c in df_dapot.columns if 'nop' in c.lower() or 'dept' in c.lower() or 'departemen' in c.lower()]
             dept_col = dept_col[0] if dept_col else None
@@ -240,12 +240,17 @@ with col_f1:
     selected_dates = st.date_input("📅 Tanggal:", value=(default_start, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
-df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
+
+# Pisahkan filter tanggal (df_date_filtered) buat nyari anakan utuh, dan df_periode buat filter UI
+df_date_filtered = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
+df_periode = df_date_filtered.copy()
 
 with col_f2:
     if 'Departemen' in df_periode.columns:
         list_nop = sorted(df_periode[df_periode['Departemen'] != 'UNKNOWN']['Departemen'].unique().tolist())
-        selected_nop = st.multiselect("🏢 NOP / Dept:", options=list_nop)
+        # Default Auto-Pilih NOP Palangkaraya
+        default_nop = [n for n in list_nop if 'PALANGKARAYA' in n.upper()]
+        selected_nop = st.multiselect("🏢 NOP / Dept:", options=list_nop, default=default_nop)
     else: selected_nop = []
 
 if selected_nop: df_periode = df_periode[df_periode['Departemen'].isin(selected_nop)]
@@ -280,7 +285,9 @@ if selected_sites:
         anak_str = site_mapping.get(site_code, '')
         list_anak = [] if pd.isna(anak_str) or anak_str == '' else [x.strip().upper() for x in str(anak_str).split(',')]
         all_related.update(list_anak)
-    impact_df = df_periode[df_periode['Site_ID'].isin(all_related)].copy()
+    
+    # Bypass filter NOP/Kab/Kec biar anakan beda area tetap muncul
+    impact_df = df_date_filtered[df_date_filtered['Site_ID'].isin(all_related)].copy()
     
     parent_codes = [s.split(" - ")[0] for s in selected_sites]
     impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
@@ -298,12 +305,14 @@ st.write(f"### 🚨 Top Worst Contributor ({start_date.strftime('%d %b %Y')} - {
 
 col_w1, col_w2, col_w3 = st.columns(3)
 
+# UPDATE HOVER TEMPLATE BIAR FORMAT RUPIAH RAPI
 with col_w1:
     if 'Kabupaten' in impact_df.columns:
         worst_kab = impact_df[impact_df['Kabupaten'] != 'UNKNOWN'].groupby('Kabupaten')['Lost_Revenue'].sum().nlargest(5).sort_values()
         if not worst_kab.empty:
             fig_kab = px.bar(worst_kab, x=worst_kab.values, y=worst_kab.index, orientation='h', 
                              title='Top 5 Worst Kabupaten', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#EC2028'])
+            fig_kab.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
             fig_kab.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kab, use_container_width=True)
 
@@ -313,6 +322,7 @@ with col_w2:
         if not worst_kec.empty:
             fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', 
                              title='Top 5 Worst Kecamatan', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#ff7f0e'])
+            fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
             fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kec, use_container_width=True)
 
@@ -321,6 +331,7 @@ with col_w3:
     if not worst_site.empty:
         fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', 
                           title='Top 5 Worst Site', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#d62728'])
+        fig_site.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
         fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
         st.plotly_chart(fig_site, use_container_width=True)
 
@@ -375,8 +386,11 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Rev (Potensi)", "Lost Rev", 
 
 def buat_grafik(df, x_col, y_col, tipe):
     if len(df['Site_ID'].unique()) > 20: 
-        # FIX NUMERIC ONLY MENCEGAH TYPE ERROR PANDAS BARU
-        df = df.groupby(x_col).sum(numeric_only=True).reset_index()
+        # FIX: REV & PAYLOAD = SUM. AVAIL & PL = MEAN
+        if tipe in ['rev', 'pay']:
+            df = df.groupby(x_col).sum(numeric_only=True).reset_index()
+        else:
+            df = df.groupby(x_col).mean(numeric_only=True).reset_index()
         df['Site_ID'] = 'TOTAL AGREGAT'
         
     if tipe == 'rev':
