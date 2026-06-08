@@ -47,7 +47,7 @@ def clean_column_names(df):
 
 # --- 1. FITUR UPLOAD ---
 with st.expander("⚙️ Update Data Harian / Master"):
-    st.info("Upload file data harian terbaru di sini. Data akan otomatis ditambahkan ke historis yang sudah ada.")
+    st.info("Upload file data terbaru di sini. Data akan otomatis disinkronisasi ke server.")
     
     col_up1, col_up2, col_up3 = st.columns(3)
     with col_up1:
@@ -55,10 +55,10 @@ with st.expander("⚙️ Update Data Harian / Master"):
     with col_up2:
         file_avail = st.file_uploader("📂 2. Data Availability (Harian)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
     with col_up3:
-        file_dapot = st.file_uploader("📂 3. Data Dapot Master", type=["csv", "xlsx", "xls"])
+        file_dapot = st.file_uploader("📂 3. Data Dapot Master (Referensi Utama)", type=["csv", "xlsx", "xls"])
     
-    if st.button("💾 Simpan Data", type="primary"):
-        with st.spinner("Memproses dan menyimpan data... (Ini mungkin memakan waktu untuk data besar)"):
+    if st.button("💾 Simpan Semua Data", type="primary"):
+        with st.spinner("Memproses dan menyimpan data... (Mungkin memakan waktu)"):
             try:
                 if len(file_rev) > 0:
                     for f in file_rev:
@@ -95,11 +95,11 @@ with st.expander("⚙️ Update Data Harian / Master"):
                 st.cache_data.clear() 
                 st.rerun() 
             except Exception as e:
-                st.error("Gagal memproses data. Pastikan format file sudah benar.")
+                st.error(f"Gagal memproses data. Pastikan format file sudah benar. Log: {e}")
 
 st.divider()
 
-# --- 2. LOAD MAPPING DAPOT ---
+# --- 2. LOAD MAPPING DAPOT SEBAGAI MASTER ---
 @st.cache_data(ttl="1h")
 def load_dapot():
     try:
@@ -122,21 +122,18 @@ else:
 # --- 3. AUTO-LOAD DATA SISTEM (RAM OPTIMIZED) ---
 try:
     with st.spinner("Memuat data sistem dengan mode hemat memori..."):
-        # Ambil sampel nama kolom doang buat filter
         samp_rev = conn.query("SELECT * FROM revenue_data LIMIT 1", ttl="10m")
         samp_avail = conn.query("SELECT * FROM availability_data LIMIT 1", ttl="10m")
         
         if samp_rev.empty or samp_avail.empty:
-            st.warning("Data sistem masih kosong. Gunakan menu 'Update Data Master' di atas untuk inisiasi awal.")
+            st.warning("Data sistem masih kosong. Gunakan menu 'Update Data' di atas untuk inisiasi awal.")
             st.stop()
             
-        # Pilih kolom Revenue
         rev_date = [c for c in samp_rev.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()][0]
         rev_site = [c for c in samp_rev.columns if 'site' in c.lower()][0]
         rev_rev = [c for c in samp_rev.columns if 'revenue' in c.lower()][0]
         rev_pay = [c for c in samp_rev.columns if 'payload' in c.lower()][0]
         
-        # Tarik data Revenue cuma 4 kolom inti (Sisanya dibuang biar ga menuhin RAM)
         col_rev_str = ", ".join(list(set([rev_date, rev_site, rev_rev, rev_pay])))
         df_rev = conn.query(f"SELECT {col_rev_str} FROM revenue_data", ttl="10m")
         
@@ -146,7 +143,6 @@ try:
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0).astype('float32')
         df_rev['Actual_Payload'] = (pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024).astype('float32')
         
-        # Pilih kolom Availability
         avail_date = [c for c in samp_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
         if 'managed_element' in samp_avail.columns: avail_site = 'managed_element'
         else:
@@ -157,7 +153,6 @@ try:
         loss_val_list = [c for c in samp_avail.columns if 'loss' in c.lower()]
         avail_loss = loss_val_list[0] if loss_val_list else None
         
-        # Tarik data Availability cuma kolom inti
         cols_avail_to_pull = [avail_date, avail_site, avail_val]
         if avail_loss: cols_avail_to_pull.append(avail_loss)
         col_avail_str = ", ".join(list(set(cols_avail_to_pull)))
@@ -170,7 +165,6 @@ try:
         if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(0.0).astype('float32')
         else: df_avail['Packet_Loss'] = 0.0
 
-        # Drop duplicates & Merge
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
 
@@ -178,7 +172,6 @@ try:
                              df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], 
                              on=['Site_ID', 'Date'], how='outer')
         
-        # Bersihin memori
         del df_rev
         del df_avail
         gc.collect()
@@ -189,14 +182,33 @@ try:
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
-        # Gabung Dapot
+        # GABUNGKAN SEMUA INFO DARI DAPOT (NOP, KAB, KEC, DLL)
         if not df_dapot.empty:
-            dapot_cols = ['site_id', 'site_name', 'kotakab', 'kecamatan', 'site_class', 'pln__non_pln', 'power_classification', 'site_simpul', 'hub_site']
-            dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
-            df_merged = pd.merge(df_merged, df_dapot[dapot_cols], left_on='Site_ID', right_on='site_id', how='left')
-            df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
-            if 'kotakab' in df_merged.columns: df_merged['kotakab'] = df_merged['kotakab'].fillna('UNKNOWN')
-            if 'kecamatan' in df_merged.columns: df_merged['kecamatan'] = df_merged['kecamatan'].fillna('UNKNOWN')
+            dept_col = [c for c in df_dapot.columns if 'nop' in c.lower() or 'dept' in c.lower() or 'departemen' in c.lower()]
+            dept_col = dept_col[0] if dept_col else None
+            
+            kab_col = [c for c in df_dapot.columns if 'kab' in c.lower() or 'kota' in c.lower()]
+            kab_col = kab_col[0] if kab_col else None
+            
+            kec_col = [c for c in df_dapot.columns if 'kec' in c.lower()]
+            kec_col = kec_col[0] if kec_col else None
+            
+            extra_cols = ['site_name', 'site_class', 'pln__non_pln', 'power_classification', 'site_simpul', 'hub_site']
+            cols_to_merge = ['site_id'] + [c for c in extra_cols if c in df_dapot.columns]
+            if dept_col and dept_col not in cols_to_merge: cols_to_merge.append(dept_col)
+            if kab_col and kab_col not in cols_to_merge: cols_to_merge.append(kab_col)
+            if kec_col and kec_col not in cols_to_merge: cols_to_merge.append(kec_col)
+            
+            df_dapot_unique = df_dapot[cols_to_merge].drop_duplicates(subset=['site_id'], keep='last')
+            df_merged = pd.merge(df_merged, df_dapot_unique, left_on='Site_ID', right_on='site_id', how='left')
+            
+            if dept_col: df_merged.rename(columns={dept_col: 'Departemen'}, inplace=True)
+            if kab_col: df_merged.rename(columns={kab_col: 'Kabupaten'}, inplace=True)
+            if kec_col: df_merged.rename(columns={kec_col: 'Kecamatan'}, inplace=True)
+            
+        df_merged['Departemen'] = df_merged.get('Departemen', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
+        df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
+        df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
 
         # Fast Vectorized Math
         mask = (df_merged['Availability'] > 0) & (df_merged['Packet_Loss'] < 1)
@@ -218,41 +230,46 @@ except Exception as e:
 # --- 4. UI: FILTER MULTILEVEL ---
 st.write("### ⚙️ Filter Analisis Area & Site")
 
-col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 
 with col_f1:
     min_date = df_merged['Date'].min()
     max_date = df_merged['Date'].max()
-    
-    # PERBAIKAN FATAL: Default nampilin 7 hari terakhir biar UI ga meledak ngerender ratusan ribu data
     default_start = max_date - datetime.timedelta(days=7)
     if default_start < min_date: default_start = min_date
-        
-    selected_dates = st.date_input("📅 Periode Tanggal:", value=(default_start, max_date), min_value=min_date, max_value=max_date)
+    selected_dates = st.date_input("📅 Tanggal:", value=(default_start, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
 df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
 
 with col_f2:
-    if 'kotakab' in df_periode.columns:
-        list_kab = sorted(df_periode['kotakab'].unique().tolist())
-        selected_kab = st.multiselect("🏙️ Filter Kabupaten:", options=list_kab)
-    else: selected_kab = []
+    if 'Departemen' in df_periode.columns:
+        list_nop = sorted(df_periode[df_periode['Departemen'] != 'UNKNOWN']['Departemen'].unique().tolist())
+        selected_nop = st.multiselect("🏢 NOP / Dept:", options=list_nop)
+    else: selected_nop = []
 
-if selected_kab: df_periode = df_periode[df_periode['kotakab'].isin(selected_kab)]
+if selected_nop: df_periode = df_periode[df_periode['Departemen'].isin(selected_nop)]
 
 with col_f3:
-    if 'kecamatan' in df_periode.columns:
-        list_kec = sorted(df_periode['kecamatan'].unique().tolist())
-        selected_kec = st.multiselect("🏘️ Filter Kecamatan:", options=list_kec)
-    else: selected_kec = []
+    if 'Kabupaten' in df_periode.columns:
+        list_kab = sorted(df_periode[df_periode['Kabupaten'] != 'UNKNOWN']['Kabupaten'].unique().tolist())
+        selected_kab = st.multiselect("🏙️ Kabupaten:", options=list_kab)
+    else: selected_kab = []
 
-if selected_kec: df_periode = df_periode[df_periode['kecamatan'].isin(selected_kec)]
+if selected_kab: df_periode = df_periode[df_periode['Kabupaten'].isin(selected_kab)]
 
 with col_f4:
+    if 'Kecamatan' in df_periode.columns:
+        list_kec = sorted(df_periode[df_periode['Kecamatan'] != 'UNKNOWN']['Kecamatan'].unique().tolist())
+        selected_kec = st.multiselect("🏘️ Kecamatan:", options=list_kec)
+    else: selected_kec = []
+
+if selected_kec: df_periode = df_periode[df_periode['Kecamatan'].isin(selected_kec)]
+
+with col_f5:
     list_sites = sorted(df_periode['Site_ID'].dropna().unique().tolist())
     dropdown_options = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_sites]
-    selected_sites = st.multiselect("🔍 Filter Spesifik Site:", options=dropdown_options)
+    selected_sites = st.multiselect("🔍 Spesifik Site:", options=dropdown_options)
 
 # --- 5. LOGIC PROCESSING & ANAKAN INCLUSION ---
 if selected_sites:
@@ -278,32 +295,34 @@ if impact_df.empty:
 # --- 6. DASHBOARD WORST CONTRIBUTOR ---
 st.write("---")
 st.write(f"### 🚨 Top Worst Contributor ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
-st.caption("Site dengan nilai **Lost Revenue** paling besar yang menyumbang kerugian perusahaan.")
 
 col_w1, col_w2, col_w3 = st.columns(3)
 
 with col_w1:
-    if 'kotakab' in impact_df.columns:
-        worst_kab = impact_df.groupby('kotakab')['Lost_Revenue'].sum().nlargest(5).sort_values()
-        fig_kab = px.bar(worst_kab, x=worst_kab.values, y=worst_kab.index, orientation='h', 
-                         title='Top 5 Worst Kabupaten', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#EC2028'])
-        fig_kab.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
-        st.plotly_chart(fig_kab, use_container_width=True)
+    if 'Kabupaten' in impact_df.columns:
+        worst_kab = impact_df[impact_df['Kabupaten'] != 'UNKNOWN'].groupby('Kabupaten')['Lost_Revenue'].sum().nlargest(5).sort_values()
+        if not worst_kab.empty:
+            fig_kab = px.bar(worst_kab, x=worst_kab.values, y=worst_kab.index, orientation='h', 
+                             title='Top 5 Worst Kabupaten', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#EC2028'])
+            fig_kab.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            st.plotly_chart(fig_kab, use_container_width=True)
 
 with col_w2:
-    if 'kecamatan' in impact_df.columns:
-        worst_kec = impact_df.groupby('kecamatan')['Lost_Revenue'].sum().nlargest(5).sort_values()
-        fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', 
-                         title='Top 5 Worst Kecamatan', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#ff7f0e'])
-        fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
-        st.plotly_chart(fig_kec, use_container_width=True)
+    if 'Kecamatan' in impact_df.columns:
+        worst_kec = impact_df[impact_df['Kecamatan'] != 'UNKNOWN'].groupby('Kecamatan')['Lost_Revenue'].sum().nlargest(5).sort_values()
+        if not worst_kec.empty:
+            fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', 
+                             title='Top 5 Worst Kecamatan', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#ff7f0e'])
+            fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            st.plotly_chart(fig_kec, use_container_width=True)
 
 with col_w3:
     worst_site = impact_df.groupby('Site_ID')['Lost_Revenue'].sum().nlargest(5).sort_values()
-    fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', 
-                      title='Top 5 Worst Site', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#d62728'])
-    fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
-    st.plotly_chart(fig_site, use_container_width=True)
+    if not worst_site.empty:
+        fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', 
+                          title='Top 5 Worst Site', labels={'x':'Lost Revenue (Rp)', 'y':''}, color_discrete_sequence=['#d62728'])
+        fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+        st.plotly_chart(fig_site, use_container_width=True)
 
 
 # --- 7. DASHBOARD SUMMARY ---
@@ -356,7 +375,8 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Rev (Potensi)", "Lost Rev", 
 
 def buat_grafik(df, x_col, y_col, tipe):
     if len(df['Site_ID'].unique()) > 20: 
-        df = df.groupby(x_col).sum().reset_index()
+        # FIX NUMERIC ONLY MENCEGAH TYPE ERROR PANDAS BARU
+        df = df.groupby(x_col).sum(numeric_only=True).reset_index()
         df['Site_ID'] = 'TOTAL AGREGAT'
         
     if tipe == 'rev':
@@ -385,7 +405,7 @@ st.divider()
 # --- 9. DETAIL DATAFRAME ---
 st.write("### 🗄️ Detail Data Aktual vs Potensi")
 
-base_cols = ['Date', 'Site_ID', 'site_name', 'Keterangan', 'kotakab', 'kecamatan', 'Availability', 'Packet_Loss', 'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Potential_Payload', 'Lost_Payload', 'Actual_Payload']
+base_cols = ['Date', 'Site_ID', 'site_name', 'Keterangan', 'Departemen', 'Kabupaten', 'Kecamatan', 'Availability', 'Packet_Loss', 'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Potential_Payload', 'Lost_Payload', 'Actual_Payload']
 display_cols = [c for c in base_cols if c in impact_df.columns]
 
 col_t1, col_t2 = st.columns([1, 1])
@@ -406,7 +426,6 @@ def get_red_maroon_style(ratio):
     txt_color = 'white' if ((0.299 * r + 0.587 * g + 0.114 * b) / 255) < 0.5 else 'black'
     return f'background-color: #{r:02x}{g:02x}{b:02x}; color: {txt_color}; font-weight: bold;'
 
-# BATASIN CUMA 2000 BARIS BIAR UI STREAMLIT NGGAK MELEDAK
 styled_df = impact_df.head(2000)[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
     'Availability': '{:.2%}', 'Packet_Loss': '{:.2%}', 'Potential_Revenue': 'Rp {:,.0f}', 'Lost_Revenue': 'Rp {:,.0f}',
     'Actual_Revenue': 'Rp {:,.0f}', 'Potential_Payload': '{:,.0f} GB', 'Lost_Payload': '{:,.0f} GB', 'Actual_Payload': '{:,.0f} GB'
