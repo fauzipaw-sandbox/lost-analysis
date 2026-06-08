@@ -111,10 +111,25 @@ def load_dapot():
 df_dapot = load_dapot()
 
 if not df_dapot.empty:
-    col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower()][0] if any('anakan' in c.lower() for c in df_dapot.columns) else None
-    site_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_anakan].astype(str))) if col_anakan else {}
     col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
     name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
+    
+    # LOGIC BARU: CARI ANAKAN BERDASARKAN KOLOM SITE SIMPUL (HUB) BUKAN JUMLAH ANAKAN
+    site_mapping = {}
+    col_simpul = [c for c in df_dapot.columns if 'simpul' in c.lower() or 'hub' in c.lower() or 'induk' in c.lower()]
+    if col_simpul:
+        col_target = col_simpul[0]
+        df_has_simpul = df_dapot.dropna(subset=[col_target])
+        for _, row in df_has_simpul.iterrows():
+            parent_site = str(row[col_target]).strip().upper()
+            child_site = str(row['site_id']).strip().upper()
+            
+            # Jika punya induk dan induknya bukan dirinya sendiri
+            if parent_site and parent_site not in ['NAN', 'NONE', ''] and parent_site != child_site:
+                if parent_site not in site_mapping:
+                    site_mapping[parent_site] = []
+                if child_site not in site_mapping[parent_site]:
+                    site_mapping[parent_site].append(child_site)
 else:
     site_mapping = {}
     name_mapping = {}
@@ -241,7 +256,7 @@ with col_f1:
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
 
-# Backup data sebelum filter UI buat narik anakan beda area
+# Backup data utuh tanpa filter area untuk narik anakan beda area
 df_date_filtered = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
 df_periode = df_date_filtered.copy()
 
@@ -283,8 +298,7 @@ if selected_parents:
     for s in selected_parents:
         site_code = s.split(" - ")[0]
         all_related.add(site_code)
-        anak_str = site_mapping.get(site_code, '')
-        list_anak = [] if pd.isna(anak_str) or str(anak_str).strip() == '' or str(anak_str).lower() in ['nan', 'none'] else [x.strip().upper() for x in str(anak_str).split(',')]
+        list_anak = site_mapping.get(site_code, [])
         all_related.update(list_anak)
         
     impact_df_temp = df_date_filtered[df_date_filtered['Site_ID'].isin(all_related)].copy()
@@ -294,7 +308,7 @@ if selected_parents:
     fokus_site_selection = st.multiselect("🎯 Spesifik Site (Induk & Anakan) yang Dianalisis:", options=opsi_fokus, default=opsi_fokus)
     
     if not fokus_site_selection:
-        st.info("⚠️ Silakan pilih minimal satu site dari kotak di atas.")
+        st.info("⚠️ Silakan pilih minimal satu site dari kotak di atas untuk melihat detailnya.")
         st.stop()
         
     site_fokus_ids = [s.split(" - ")[0] for s in fokus_site_selection]
@@ -400,9 +414,10 @@ def buat_grafik(df, x_col, y_col, tipe):
     if len(df['Site_ID'].unique()) > 20: 
         if tipe in ['rev', 'pay']:
             df = df.groupby(x_col).sum(numeric_only=True).reset_index()
+            df['Site_ID'] = 'TOTAL AREA (AGREGAT SUM)'
         else:
             df = df.groupby(x_col).mean(numeric_only=True).reset_index()
-        df['Site_ID'] = 'TOTAL AGREGAT'
+            df['Site_ID'] = 'RATA-RATA AREA (AGREGAT MEAN)'
         
     if tipe == 'rev':
         fig = px.line(df, x=x_col, y=y_col, color='Site_ID', markers=True, line_shape='spline')
