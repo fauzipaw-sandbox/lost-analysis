@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import os
 import io
+import datetime
+import gc
 from sqlalchemy import text
 
 st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
@@ -33,18 +35,17 @@ with col_logo:
 
 st.write("Pantau Aktual, Potensi (Gain), dan *Lost* performa site secara real-time dari seluruh area.")
 
-# --- KONEKSI SISTEM (DISAMARKAN) ---
+# --- KONEKSI SISTEM ---
 conn = st.connection("supabase", type="sql")
 engine = conn.engine
 
-# --- FUNGSI PEMBERSIH NAMA KOLOM ---
 def clean_column_names(df):
     cols = df.columns.astype(str).str.lower()
     cols = cols.str.replace(' ', '_')
     cols = cols.str.replace(r'[^a-zA-Z0-9_]', '', regex=True)
     return cols
 
-# --- 1. FITUR UPLOAD (UI GENERIK) ---
+# --- 1. FITUR UPLOAD ---
 with st.expander("⚙️ Update Data Harian / Master"):
     st.info("Upload file data harian terbaru di sini. Data akan otomatis ditambahkan ke historis yang sudah ada.")
     
@@ -67,8 +68,7 @@ with st.expander("⚙️ Update Data Harian / Master"):
                 
                 if len(file_avail) > 0:
                     for f in file_avail:
-                        if f.name.endswith('.csv'):
-                            df_temp = pd.read_csv(f)
+                        if f.name.endswith('.csv'): df_temp = pd.read_csv(f)
                         else:
                             xls_avail = pd.ExcelFile(f)
                             sheet_target = xls_avail.sheet_names[0] 
@@ -78,7 +78,6 @@ with st.expander("⚙️ Update Data Harian / Master"):
                                     sheet_target = sheet
                                     break
                             df_temp = pd.read_excel(xls_avail, sheet_name=sheet_target)
-                        
                         df_temp.columns = clean_column_names(df_temp)
                         df_temp.to_sql('availability_data', engine, if_exists='append', index=False, chunksize=5000)
 
@@ -100,16 +99,14 @@ with st.expander("⚙️ Update Data Harian / Master"):
 
 st.divider()
 
-# --- 2. LOAD MAPPING SITE DAPOT ---
+# --- 2. LOAD MAPPING DAPOT ---
 @st.cache_data(ttl="1h")
 def load_dapot():
     try:
         df_dapot = conn.query("SELECT * FROM dapot_data;", ttl="1h")
-        if 'site_id' in df_dapot.columns:
-            df_dapot['site_id'] = df_dapot['site_id'].astype(str).str.strip().str.upper()
+        if 'site_id' in df_dapot.columns: df_dapot['site_id'] = df_dapot['site_id'].astype(str).str.strip().str.upper()
         return df_dapot
-    except Exception as e:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 df_dapot = load_dapot()
 
@@ -122,76 +119,87 @@ else:
     site_mapping = {}
     name_mapping = {}
 
-# --- 3. AUTO-LOAD DATA SISTEM ---
+# --- 3. AUTO-LOAD DATA SISTEM (RAM OPTIMIZED) ---
 try:
-    with st.spinner("Memuat data sistem..."):
-        df_rev = conn.query("SELECT * FROM revenue_data", ttl="10m")
-        df_avail = conn.query("SELECT * FROM availability_data", ttl="10m")
+    with st.spinner("Memuat data sistem dengan mode hemat memori..."):
+        # Ambil sampel nama kolom doang buat filter
+        samp_rev = conn.query("SELECT * FROM revenue_data LIMIT 1", ttl="10m")
+        samp_avail = conn.query("SELECT * FROM availability_data LIMIT 1", ttl="10m")
         
-        if df_rev.empty or df_avail.empty:
+        if samp_rev.empty or samp_avail.empty:
             st.warning("Data sistem masih kosong. Gunakan menu 'Update Data Master' di atas untuk inisiasi awal.")
             st.stop()
             
-        date_cols_rev = [c for c in df_rev.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()]
-        date_col_rev = date_cols_rev[0] if date_cols_rev else df_rev.columns[0]
-        df_rev['Date'] = pd.to_datetime(df_rev[date_col_rev], errors='coerce').dt.date
+        # Pilih kolom Revenue
+        rev_date = [c for c in samp_rev.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()][0]
+        rev_site = [c for c in samp_rev.columns if 'site' in c.lower()][0]
+        rev_rev = [c for c in samp_rev.columns if 'revenue' in c.lower()][0]
+        rev_pay = [c for c in samp_rev.columns if 'payload' in c.lower()][0]
         
-        site_col_rev = [c for c in df_rev.columns if 'site' in c.lower()][0]
-        df_rev['Site_ID'] = df_rev[site_col_rev].astype(str).str.strip().str.upper()
+        # Tarik data Revenue cuma 4 kolom inti (Sisanya dibuang biar ga menuhin RAM)
+        col_rev_str = ", ".join(list(set([rev_date, rev_site, rev_rev, rev_pay])))
+        df_rev = conn.query(f"SELECT {col_rev_str} FROM revenue_data", ttl="10m")
         
-        rev_col = [c for c in df_rev.columns if 'revenue' in c.lower()][0]
-        payload_col = [c for c in df_rev.columns if 'payload' in c.lower()][0]
-        df_rev.rename(columns={rev_col: 'Actual_Revenue', payload_col: 'Actual_Payload'}, inplace=True)
-        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0)
-        df_rev['Actual_Payload'] = pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024
+        df_rev['Date'] = pd.to_datetime(df_rev[rev_date], errors='coerce').dt.date
+        df_rev['Site_ID'] = df_rev[rev_site].astype(str).str.strip().str.upper()
+        df_rev.rename(columns={rev_rev: 'Actual_Revenue', rev_pay: 'Actual_Payload'}, inplace=True)
+        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev['Actual_Revenue'], errors='coerce').fillna(0).astype('float32')
+        df_rev['Actual_Payload'] = (pd.to_numeric(df_rev['Actual_Payload'], errors='coerce').fillna(0) / 1024).astype('float32')
         
-        time_cols_avail = [c for c in df_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()]
-        time_col_avail = time_cols_avail[0] if time_cols_avail else df_avail.columns[0]
-        df_avail['Date'] = pd.to_datetime(df_avail[time_col_avail], errors='coerce').dt.date
-        
-        if 'managed_element' in df_avail.columns:
-            df_avail['Site_ID'] = df_avail['managed_element'].astype(str).str.extract(r'([A-Z]{3}\d{3})')
+        # Pilih kolom Availability
+        avail_date = [c for c in samp_avail.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
+        if 'managed_element' in samp_avail.columns: avail_site = 'managed_element'
         else:
-            site_col_avail_list = [c for c in df_avail.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()]
-            site_col_avail = site_col_avail_list[0] if site_col_avail_list else df_avail.columns[0]
-            df_avail['Site_ID'] = df_avail[site_col_avail].astype(str).str.extract(r'([A-Z]{3}\d{3})')
+            site_avail_list = [c for c in samp_avail.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()]
+            avail_site = site_avail_list[0] if site_avail_list else samp_avail.columns[0]
+            
+        avail_val = [c for c in samp_avail.columns if 'availability' in c.lower() or 'avail' in c.lower()][0]
+        loss_val_list = [c for c in samp_avail.columns if 'loss' in c.lower()]
+        avail_loss = loss_val_list[0] if loss_val_list else None
         
-        avail_cols = [c for c in df_avail.columns if 'availability' in c.lower() or 'avail' in c.lower()]
-        if avail_cols:
-            df_avail[avail_cols] = df_avail[avail_cols].apply(pd.to_numeric, errors='coerce')
-            df_avail['Availability'] = df_avail[avail_cols].bfill(axis=1).iloc[:, 0].fillna(1.0)
+        # Tarik data Availability cuma kolom inti
+        cols_avail_to_pull = [avail_date, avail_site, avail_val]
+        if avail_loss: cols_avail_to_pull.append(avail_loss)
+        col_avail_str = ", ".join(list(set(cols_avail_to_pull)))
         
-        loss_cols = [c for c in df_avail.columns if 'loss' in c.lower()]
-        if loss_cols:
-            df_avail[loss_cols] = df_avail[loss_cols].apply(pd.to_numeric, errors='coerce')
-            df_avail['Packet_Loss'] = df_avail[loss_cols].bfill(axis=1).iloc[:, 0].fillna(0.0)
+        df_avail = conn.query(f"SELECT {col_avail_str} FROM availability_data", ttl="10m")
+        
+        df_avail['Date'] = pd.to_datetime(df_avail[avail_date], errors='coerce').dt.date
+        df_avail['Site_ID'] = df_avail[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})')
+        df_avail['Availability'] = pd.to_numeric(df_avail[avail_val], errors='coerce').fillna(1.0).astype('float32')
+        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(0.0).astype('float32')
+        else: df_avail['Packet_Loss'] = 0.0
 
+        # Drop duplicates & Merge
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
 
-        df_merged = pd.merge(df_rev, df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], on=['Site_ID', 'Date'], how='outer')
+        df_merged = pd.merge(df_rev[['Site_ID', 'Date', 'Actual_Revenue', 'Actual_Payload']], 
+                             df_avail[['Site_ID', 'Date', 'Availability', 'Packet_Loss']], 
+                             on=['Site_ID', 'Date'], how='outer')
+        
+        # Bersihin memori
+        del df_rev
+        del df_avail
+        gc.collect()
         
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
         df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
-        
         df_merged = df_merged.dropna(subset=['Date'])
 
-        # --- GABUNGKAN DATA DAPOT UTAMA (KAB, KEC) ---
+        # Gabung Dapot
         if not df_dapot.empty:
             dapot_cols = ['site_id', 'site_name', 'kotakab', 'kecamatan', 'site_class', 'pln__non_pln', 'power_classification', 'site_simpul', 'hub_site']
             dapot_cols = [c for c in dapot_cols if c in df_dapot.columns]
             df_merged = pd.merge(df_merged, df_dapot[dapot_cols], left_on='Site_ID', right_on='site_id', how='left')
             df_merged = df_merged[df_merged['Site_ID'].isin(df_dapot['site_id'])]
-            
-            # Bersihkan nilai NaN buat filter
             if 'kotakab' in df_merged.columns: df_merged['kotakab'] = df_merged['kotakab'].fillna('UNKNOWN')
             if 'kecamatan' in df_merged.columns: df_merged['kecamatan'] = df_merged['kecamatan'].fillna('UNKNOWN')
 
-        # --- SUPER FAST CALCULATION (VECTORIZED) ---
+        # Fast Vectorized Math
         mask = (df_merged['Availability'] > 0) & (df_merged['Packet_Loss'] < 1)
-        
         df_merged['Potential_Revenue'] = df_merged['Actual_Revenue']
         df_merged.loc[mask, 'Potential_Revenue'] = df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
         df_merged['Lost_Revenue'] = df_merged['Potential_Revenue'] - df_merged['Actual_Revenue']
@@ -215,7 +223,12 @@ col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 with col_f1:
     min_date = df_merged['Date'].min()
     max_date = df_merged['Date'].max()
-    selected_dates = st.date_input("📅 Periode Tanggal:", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    
+    # PERBAIKAN FATAL: Default nampilin 7 hari terakhir biar UI ga meledak ngerender ratusan ribu data
+    default_start = max_date - datetime.timedelta(days=7)
+    if default_start < min_date: default_start = min_date
+        
+    selected_dates = st.date_input("📅 Periode Tanggal:", value=(default_start, max_date), min_value=min_date, max_value=max_date)
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
 df_periode = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
@@ -252,7 +265,6 @@ if selected_sites:
         all_related.update(list_anak)
     impact_df = df_periode[df_periode['Site_ID'].isin(all_related)].copy()
     
-    # Tandai Induk/Anakan khusus jika ada site yang dipilih
     parent_codes = [s.split(" - ")[0] for s in selected_sites]
     impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
 else:
@@ -344,7 +356,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Rev (Potensi)", "Lost Rev", 
 
 def buat_grafik(df, x_col, y_col, tipe):
     if len(df['Site_ID'].unique()) > 20: 
-        # Kalau sitenya terlalu banyak (misal lihat se-kabupaten), grafiknya kita gabung aja biar gak pusing
         df = df.groupby(x_col).sum().reset_index()
         df['Site_ID'] = 'TOTAL AGREGAT'
         
@@ -372,14 +383,17 @@ with tab6: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', 
 st.divider()
 
 # --- 9. DETAIL DATAFRAME ---
-st.write("### 🗄️ Detail Data Harian Aktual vs Potensi")
+st.write("### 🗄️ Detail Data Aktual vs Potensi")
 
 base_cols = ['Date', 'Site_ID', 'site_name', 'Keterangan', 'kotakab', 'kecamatan', 'Availability', 'Packet_Loss', 'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Potential_Payload', 'Lost_Payload', 'Actual_Payload']
 display_cols = [c for c in base_cols if c in impact_df.columns]
 
 col_t1, col_t2 = st.columns([1, 1])
 with col_t1:
-    st.caption("Gunakan fitur Download untuk mengekspor data yang sedang di-filter.")
+    if len(impact_df) > 2000:
+        st.caption("⚠️ *Menampilkan maksimal 2000 baris pertama untuk menjaga performa web. Silakan gunakan fitur Download untuk mengekspor seluruh data.*")
+    else:
+        st.caption("Gunakan fitur Download untuk mengekspor data yang sedang di-filter.")
 with col_t2:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -392,7 +406,8 @@ def get_red_maroon_style(ratio):
     txt_color = 'white' if ((0.299 * r + 0.587 * g + 0.114 * b) / 255) < 0.5 else 'black'
     return f'background-color: #{r:02x}{g:02x}{b:02x}; color: {txt_color}; font-weight: bold;'
 
-styled_df = impact_df[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
+# BATASIN CUMA 2000 BARIS BIAR UI STREAMLIT NGGAK MELEDAK
+styled_df = impact_df.head(2000)[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
     'Availability': '{:.2%}', 'Packet_Loss': '{:.2%}', 'Potential_Revenue': 'Rp {:,.0f}', 'Lost_Revenue': 'Rp {:,.0f}',
     'Actual_Revenue': 'Rp {:,.0f}', 'Potential_Payload': '{:,.0f} GB', 'Lost_Payload': '{:,.0f} GB', 'Actual_Payload': '{:,.0f} GB'
 }).apply(lambda s: ['background-color: #d4edda; color: #155724; font-weight: bold;' if v >= 0.99 else get_red_maroon_style((v - 0.99) / (s.min() - 0.99) if s.min() < 0.99 else 0) if pd.notna(v) else '' for v in s], subset=['Availability']
