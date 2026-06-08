@@ -5,6 +5,7 @@ import os
 import io
 import datetime
 import gc
+import re
 from sqlalchemy import text
 
 st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
@@ -114,22 +115,40 @@ if not df_dapot.empty:
     col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
     name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
     
-    # LOGIC BARU: CARI ANAKAN BERDASARKAN KOLOM SITE SIMPUL (HUB) BUKAN JUMLAH ANAKAN
-    site_mapping = {}
-    col_simpul = [c for c in df_dapot.columns if 'simpul' in c.lower() or 'hub' in c.lower() or 'induk' in c.lower()]
-    if col_simpul:
-        col_target = col_simpul[0]
-        df_has_simpul = df_dapot.dropna(subset=[col_target])
-        for _, row in df_has_simpul.iterrows():
-            parent_site = str(row[col_target]).strip().upper()
+    # 🌟 LOGIC RADAR CERDAS: Ekstrak Anakan 🌟
+    site_mapping_temp = {}
+    
+    # A. Cek dari kolom SIMPUL/HUB (Anakan lapor ke Induk)
+    col_simpul = [c for c in df_dapot.columns if ('simpul' in c.lower() or 'hub' in c.lower() or 'induk' in c.lower()) and 'jumlah' not in c.lower()]
+    for c_simpul in col_simpul:
+        for _, row in df_dapot.dropna(subset=[c_simpul]).iterrows():
+            parent_raw = str(row[c_simpul]).upper()
             child_site = str(row['site_id']).strip().upper()
             
-            # Jika punya induk dan induknya bukan dirinya sendiri
-            if parent_site and parent_site not in ['NAN', 'NONE', ''] and parent_site != child_site:
-                if parent_site not in site_mapping:
-                    site_mapping[parent_site] = []
-                if child_site not in site_mapping[parent_site]:
-                    site_mapping[parent_site].append(child_site)
+            # Cari format [3 Huruf][3 Angka] kayak KSN002
+            match = re.search(r'([A-Z]{3}\d{3})', parent_raw)
+            if match:
+                parent_site = match.group(1)
+                if parent_site != child_site:
+                    if parent_site not in site_mapping_temp: site_mapping_temp[parent_site] = set()
+                    site_mapping_temp[parent_site].add(child_site)
+
+    # B. Cek dari kolom ANAKAN langsung (Induk nge-list Anakannya pakai koma)
+    col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower() and 'jumlah' not in c.lower()]
+    for c_anak in col_anakan:
+        for _, row in df_dapot.dropna(subset=[c_anak]).iterrows():
+            parent_site = str(row['site_id']).strip().upper()
+            anak_raw = str(row[c_anak]).upper()
+            anak_list = [x.strip() for x in anak_raw.split(',')]
+            
+            if parent_site not in site_mapping_temp: site_mapping_temp[parent_site] = set()
+            for a in anak_list:
+                match = re.search(r'([A-Z]{3}\d{3})', a)
+                if match:
+                    site_mapping_temp[parent_site].add(match.group(1))
+
+    # Convert Set ke List biar gampang dibaca UI
+    site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
 else:
     site_mapping = {}
     name_mapping = {}
@@ -293,16 +312,17 @@ st.write("---")
 selected_parents = st.multiselect("🔍 Cari & Pilih Site Induk:", options=dropdown_options, help="Pilih site induk di sini, anakannya otomatis akan muncul.")
 
 if selected_parents:
-    # KALAU MILIH SITE -> MODE INDUK & ANAKAN
+    # KALAU MILIH SITE -> MODE INDUK & ANAKAN (Bypass Area Filter)
     all_related = set()
     for s in selected_parents:
         site_code = s.split(" - ")[0]
         all_related.add(site_code)
+        # Nangkep anakan dari kamus pinter yang udah dibuat
         list_anak = site_mapping.get(site_code, [])
         all_related.update(list_anak)
         
-    impact_df_temp = df_date_filtered[df_date_filtered['Site_ID'].isin(all_related)].copy()
-    list_site_terlibat = sorted(impact_df_temp['Site_ID'].unique().tolist())
+    # Memaksa SEMUA site (induk+anakan) masuk ke Opsi Fokus, walau datanya lagi kosong
+    list_site_terlibat = sorted(list(all_related))
     opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
     
     fokus_site_selection = st.multiselect("🎯 Spesifik Site (Induk & Anakan) yang Dianalisis:", options=opsi_fokus, default=opsi_fokus)
@@ -312,7 +332,7 @@ if selected_parents:
         st.stop()
         
     site_fokus_ids = [s.split(" - ")[0] for s in fokus_site_selection]
-    impact_df = impact_df_temp[impact_df_temp['Site_ID'].isin(site_fokus_ids)].copy()
+    impact_df = df_date_filtered[df_date_filtered['Site_ID'].isin(site_fokus_ids)].copy()
     
     parent_codes = [s.split(" - ")[0] for s in selected_parents]
     impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
