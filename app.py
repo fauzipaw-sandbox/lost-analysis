@@ -230,7 +230,7 @@ except Exception as e:
 # --- 4. UI: FILTER MULTILEVEL ---
 st.write("### ⚙️ Filter Analisis Area & Site")
 
-col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
 with col_f1:
     min_date = df_merged['Date'].min()
@@ -241,14 +241,13 @@ with col_f1:
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
 
-# Pisahkan filter tanggal (df_date_filtered) buat nyari anakan utuh, dan df_periode buat filter UI
+# Backup data sebelum filter UI buat narik anakan beda area
 df_date_filtered = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
 df_periode = df_date_filtered.copy()
 
 with col_f2:
     if 'Departemen' in df_periode.columns:
         list_nop = sorted(df_periode[df_periode['Departemen'] != 'UNKNOWN']['Departemen'].unique().tolist())
-        # Default Auto-Pilih NOP Palangkaraya
         default_nop = [n for n in list_nop if 'PALANGKARAYA' in n.upper()]
         selected_nop = st.multiselect("🏢 NOP / Dept:", options=list_nop, default=default_nop)
     else: selected_nop = []
@@ -271,27 +270,41 @@ with col_f4:
 
 if selected_kec: df_periode = df_periode[df_periode['Kecamatan'].isin(selected_kec)]
 
-with col_f5:
-    list_sites = sorted(df_periode['Site_ID'].dropna().unique().tolist())
-    dropdown_options = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_sites]
-    selected_sites = st.multiselect("🔍 Spesifik Site:", options=dropdown_options)
+# --- 5. LOGIC PROCESSING & ANAKAN POP-UP ---
+list_sites = sorted(df_periode['Site_ID'].dropna().unique().tolist())
+dropdown_options = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_sites]
 
-# --- 5. LOGIC PROCESSING & ANAKAN INCLUSION ---
-if selected_sites:
+st.write("---")
+selected_parents = st.multiselect("🔍 Cari & Pilih Site Induk:", options=dropdown_options, help="Pilih site induk di sini, anakannya otomatis akan muncul.")
+
+if selected_parents:
+    # KALAU MILIH SITE -> MODE INDUK & ANAKAN
     all_related = set()
-    for s in selected_sites:
+    for s in selected_parents:
         site_code = s.split(" - ")[0]
         all_related.add(site_code)
         anak_str = site_mapping.get(site_code, '')
-        list_anak = [] if pd.isna(anak_str) or anak_str == '' else [x.strip().upper() for x in str(anak_str).split(',')]
+        list_anak = [] if pd.isna(anak_str) or str(anak_str).strip() == '' or str(anak_str).lower() in ['nan', 'none'] else [x.strip().upper() for x in str(anak_str).split(',')]
         all_related.update(list_anak)
+        
+    impact_df_temp = df_date_filtered[df_date_filtered['Site_ID'].isin(all_related)].copy()
+    list_site_terlibat = sorted(impact_df_temp['Site_ID'].unique().tolist())
+    opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
     
-    # Bypass filter NOP/Kab/Kec biar anakan beda area tetap muncul
-    impact_df = df_date_filtered[df_date_filtered['Site_ID'].isin(all_related)].copy()
+    fokus_site_selection = st.multiselect("🎯 Spesifik Site (Induk & Anakan) yang Dianalisis:", options=opsi_fokus, default=opsi_fokus)
     
-    parent_codes = [s.split(" - ")[0] for s in selected_sites]
+    if not fokus_site_selection:
+        st.info("⚠️ Silakan pilih minimal satu site dari kotak di atas.")
+        st.stop()
+        
+    site_fokus_ids = [s.split(" - ")[0] for s in fokus_site_selection]
+    impact_df = impact_df_temp[impact_df_temp['Site_ID'].isin(site_fokus_ids)].copy()
+    
+    parent_codes = [s.split(" - ")[0] for s in selected_parents]
     impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
+
 else:
+    # KALAU GA MILIH SITE -> MODE AREA ANALYTICS
     impact_df = df_periode.copy()
     impact_df['Keterangan'] = 'Terfilter dari Area'
 
@@ -305,7 +318,6 @@ st.write(f"### 🚨 Top Worst Contributor ({start_date.strftime('%d %b %Y')} - {
 
 col_w1, col_w2, col_w3 = st.columns(3)
 
-# UPDATE HOVER TEMPLATE BIAR FORMAT RUPIAH RAPI
 with col_w1:
     if 'Kabupaten' in impact_df.columns:
         worst_kab = impact_df[impact_df['Kabupaten'] != 'UNKNOWN'].groupby('Kabupaten')['Lost_Revenue'].sum().nlargest(5).sort_values()
@@ -386,7 +398,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Rev (Potensi)", "Lost Rev", 
 
 def buat_grafik(df, x_col, y_col, tipe):
     if len(df['Site_ID'].unique()) > 20: 
-        # FIX: REV & PAYLOAD = SUM. AVAIL & PL = MEAN
         if tipe in ['rev', 'pay']:
             df = df.groupby(x_col).sum(numeric_only=True).reset_index()
         else:
