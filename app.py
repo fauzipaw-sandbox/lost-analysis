@@ -115,17 +115,13 @@ if not df_dapot.empty:
     col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
     name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
     
-    # 🌟 LOGIC RADAR CERDAS: Ekstrak Anakan 🌟
     site_mapping_temp = {}
-    
-    # A. Cek dari kolom SIMPUL/HUB (Anakan lapor ke Induk)
     col_simpul = [c for c in df_dapot.columns if ('simpul' in c.lower() or 'hub' in c.lower() or 'induk' in c.lower()) and 'jumlah' not in c.lower()]
     for c_simpul in col_simpul:
         for _, row in df_dapot.dropna(subset=[c_simpul]).iterrows():
             parent_raw = str(row[c_simpul]).upper()
             child_site = str(row['site_id']).strip().upper()
             
-            # Cari format [3 Huruf][3 Angka] kayak KSN002
             match = re.search(r'([A-Z]{3}\d{3})', parent_raw)
             if match:
                 parent_site = match.group(1)
@@ -133,7 +129,6 @@ if not df_dapot.empty:
                     if parent_site not in site_mapping_temp: site_mapping_temp[parent_site] = set()
                     site_mapping_temp[parent_site].add(child_site)
 
-    # B. Cek dari kolom ANAKAN langsung (Induk nge-list Anakannya pakai koma)
     col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower() and 'jumlah' not in c.lower()]
     for c_anak in col_anakan:
         for _, row in df_dapot.dropna(subset=[c_anak]).iterrows():
@@ -147,7 +142,6 @@ if not df_dapot.empty:
                 if match:
                     site_mapping_temp[parent_site].add(match.group(1))
 
-    # Convert Set ke List biar gampang dibaca UI
     site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
 else:
     site_mapping = {}
@@ -312,16 +306,13 @@ st.write("---")
 selected_parents = st.multiselect("🔍 Cari & Pilih Site Induk:", options=dropdown_options, help="Pilih site induk di sini, anakannya otomatis akan muncul.")
 
 if selected_parents:
-    # KALAU MILIH SITE -> MODE INDUK & ANAKAN (Bypass Area Filter)
     all_related = set()
     for s in selected_parents:
         site_code = s.split(" - ")[0]
         all_related.add(site_code)
-        # Nangkep anakan dari kamus pinter yang udah dibuat
         list_anak = site_mapping.get(site_code, [])
         all_related.update(list_anak)
         
-    # Memaksa SEMUA site (induk+anakan) masuk ke Opsi Fokus, walau datanya lagi kosong
     list_site_terlibat = sorted(list(all_related))
     opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
     
@@ -338,7 +329,6 @@ if selected_parents:
     impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
 
 else:
-    # KALAU GA MILIH SITE -> MODE AREA ANALYTICS
     impact_df = df_periode.copy()
     impact_df['Keterangan'] = 'Terfilter dari Area'
 
@@ -394,21 +384,27 @@ pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
 pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
 pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
 
-gain_rev_str, gain_rev_col = (f"+{pct_gain_rev:,.2f}% Kenaikan", "normal") if pct_gain_rev > 0 else ("0% Kenaikan", "off")
-loss_rev_str, loss_rev_col = (f"{pct_lost_rev:,.2f}% Loss", "normal") if pct_lost_rev > 0 else ("0% Loss", "off")
-gain_pay_str, gain_pay_col = (f"+{pct_gain_pay:,.2f}% Kenaikan", "normal") if pct_gain_pay > 0 else ("0% Kenaikan", "off")
-loss_pay_str, loss_pay_col = (f"{pct_lost_pay:,.2f}% Loss", "normal") if pct_lost_pay > 0 else ("0% Loss", "off")
+# FORMATTING TAMPILAN LOSS BIAR ADA MINUS DAN WARNA NORMAL (STREAMLIT NGEBACA MINUS = MERAH KALAU NORMAL)
+gain_rev_str = f"+{pct_gain_rev:,.2f}% Kenaikan" if pct_gain_rev > 0 else "0% Kenaikan"
+loss_rev_str = f"-{pct_lost_rev:,.2f}% Loss" if pct_lost_rev > 0 else "0% Loss"
+gain_pay_str = f"+{pct_gain_pay:,.2f}% Kenaikan" if pct_gain_pay > 0 else "0% Kenaikan"
+loss_pay_str = f"-{pct_lost_pay:,.2f}% Loss" if pct_lost_pay > 0 else "0% Loss"
+
+gain_rev_col = "normal" if pct_gain_rev > 0 else "off"
+loss_rev_col = "normal" if pct_lost_rev > 0 else "off" 
+gain_pay_col = "normal" if pct_gain_pay > 0 else "off"
+loss_pay_col = "normal" if pct_lost_pay > 0 else "off"
 
 st.write("##### 💰 Analisis Revenue")
 c1, c2, c3 = st.columns(3)
 c1.metric("🌟 Potensi Gain (100% Ok)", f"Rp {tot_pot_rev:,.0f}", gain_rev_str, delta_color=gain_rev_col)
-c2.metric("📉 Lost Revenue", f"Rp {tot_lost_rev:,.0f}", f"-{loss_rev_str}", delta_color="inverse")
+c2.metric("📉 Lost Revenue", f"-Rp {tot_lost_rev:,.0f}", loss_rev_str, delta_color=loss_rev_col)
 c3.metric("Pendapatan Aktual", f"Rp {tot_act_rev:,.0f}")
 
 st.write("##### 📦 Analisis Payload")
 c4, c5, c6 = st.columns(3)
 c4.metric("🚀 Potensi Traffic (100% Ok)", f"{tot_pot_pay:,.0f} GB", gain_pay_str, delta_color=gain_pay_col)
-c5.metric("📉 Lost Payload", f"{tot_lost_pay:,.0f} GB", f"-{loss_pay_str}", delta_color="inverse")
+c5.metric("📉 Lost Payload", f"-{tot_lost_pay:,.0f} GB", loss_pay_str, delta_color=loss_pay_col)
 c6.metric("Traffic Aktual", f"{tot_act_pay:,.0f} GB")
 
 st.divider()
