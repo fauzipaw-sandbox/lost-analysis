@@ -189,8 +189,8 @@ try:
         
         df_avail['Date'] = pd.to_datetime(df_avail[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})')
-        df_avail['Availability'] = pd.to_numeric(df_avail[avail_val], errors='coerce').fillna(0.0).astype('float32') # Default 0.0 jika kosong
-        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(1.0).astype('float32') # Default 1.0 jika kosong
+        df_avail['Availability'] = pd.to_numeric(df_avail[avail_val], errors='coerce').fillna(0.0).astype('float32')
+        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(1.0).astype('float32')
         else: df_avail['Packet_Loss'] = 1.0
 
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
@@ -204,14 +204,12 @@ try:
         del df_avail
         gc.collect()
         
-        # 🌟 PERBAIKAN STRATEGIS: MENGATASI DATA KOSONG UME (SITE MATI) 🌟
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(0.0) # Set 0% jika baris UME kosong (Mati)
-        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)   # Set 100% jika baris UME kosong (Mati)
+        df_merged['Availability'] = df_merged['Availability'].fillna(0.0) 
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)   
         df_merged = df_merged.dropna(subset=['Date'])
 
-        # GABUNGKAN SEMUA INFO DARI DAPOT
         if not df_dapot.empty:
             dept_col = [c for c in df_dapot.columns if 'nop' in c.lower() or 'dept' in c.lower() or 'departemen' in c.lower()]
             dept_col = dept_col[0] if dept_col else None
@@ -239,14 +237,28 @@ try:
         df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
         df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
 
-        # Fast Vectorized Math (Aman dari ZeroDivision karena mask mengunci >0 dan <1)
-        mask = (df_merged['Availability'] > 0) & (df_merged['Packet_Loss'] < 1)
+        # 🌟 PARSING MATEMATIKA CERDAS: HISTORICAL BASELINE FOR SITE DOWN (AVAIL = 0) 🌟
+        # A. Hitung potensi harian normal pas site lagi ada nafas (>0% avail)
+        mask_normal = (df_merged['Availability'] > 0) & (df_merged['Packet_Loss'] < 1)
         df_merged['Potential_Revenue'] = df_merged['Actual_Revenue']
-        df_merged.loc[mask, 'Potential_Revenue'] = df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
-        df_merged['Lost_Revenue'] = df_merged['Potential_Revenue'] - df_merged['Actual_Revenue']
+        df_merged.loc[mask_normal, 'Potential_Revenue'] = df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
         
         df_merged['Potential_Payload'] = df_merged['Actual_Payload']
-        df_merged.loc[mask, 'Potential_Payload'] = df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
+        df_merged.loc[mask_normal, 'Potential_Payload'] = df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
+
+        # B. Ekstrak rata-rata potensi harian tiap site pas lagi sehat (>50% avail) buat dijadiin baseline nilai acuan
+        baseline_rev = df_merged[df_merged['Availability'] > 0.5].groupby('Site_ID')['Potential_Revenue'].mean()
+        baseline_pay = df_merged[df_merged['Availability'] > 0.5].groupby('Site_ID')['Potential_Payload'].mean()
+
+        # C. Jika site mati total (Avail == 0), paksa nilai Potential-nya ngambil dari rata-rata historis harian dia
+        mask_down = df_merged['Availability'] == 0
+        if not baseline_rev.empty:
+            df_merged.loc[mask_down, 'Potential_Revenue'] = df_merged.loc[mask_down, 'Site_ID'].map(baseline_rev).fillna(0)
+        if not baseline_pay.empty:
+            df_merged.loc[mask_down, 'Potential_Payload'] = df_merged.loc[mask_down, 'Site_ID'].map(baseline_pay).fillna(0)
+
+        # D. Hitung Real Loss-nya (Potential - Actual)
+        df_merged['Lost_Revenue'] = df_merged['Potential_Revenue'] - df_merged['Actual_Revenue']
         df_merged['Lost_Payload'] = df_merged['Potential_Payload'] - df_merged['Actual_Payload']
         
         df_merged['Availability_Pct'] = df_merged['Availability'] * 100
