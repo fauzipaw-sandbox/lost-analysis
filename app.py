@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import pandas as pd
 import plotly.express as px
 import os
@@ -189,9 +189,9 @@ try:
         
         df_avail['Date'] = pd.to_datetime(df_avail[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})')
-        df_avail['Availability'] = pd.to_numeric(df_avail[avail_val], errors='coerce').fillna(1.0).astype('float32')
-        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(0.0).astype('float32')
-        else: df_avail['Packet_Loss'] = 0.0
+        df_avail['Availability'] = pd.to_numeric(df_avail[avail_val], errors='coerce').fillna(0.0).astype('float32') # Default 0.0 jika kosong
+        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail[avail_loss], errors='coerce').fillna(1.0).astype('float32') # Default 1.0 jika kosong
+        else: df_avail['Packet_Loss'] = 1.0
 
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
@@ -204,10 +204,11 @@ try:
         del df_avail
         gc.collect()
         
+        # 🌟 PERBAIKAN STRATEGIS: MENGATASI DATA KOSONG UME (SITE MATI) 🌟
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
-        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(0.0) # Set 0% jika baris UME kosong (Mati)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)   # Set 100% jika baris UME kosong (Mati)
         df_merged = df_merged.dropna(subset=['Date'])
 
         # GABUNGKAN SEMUA INFO DARI DAPOT
@@ -238,7 +239,7 @@ try:
         df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
         df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
 
-        # Fast Vectorized Math
+        # Fast Vectorized Math (Aman dari ZeroDivision karena mask mengunci >0 dan <1)
         mask = (df_merged['Availability'] > 0) & (df_merged['Packet_Loss'] < 1)
         df_merged['Potential_Revenue'] = df_merged['Actual_Revenue']
         df_merged.loc[mask, 'Potential_Revenue'] = df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
@@ -269,7 +270,6 @@ with col_f1:
 
 start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
 
-# Backup data utuh tanpa filter area untuk narik anakan beda area
 df_date_filtered = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
 df_periode = df_date_filtered.copy()
 
@@ -384,7 +384,6 @@ pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
 pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
 pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
 
-# FORMATTING TAMPILAN LOSS BIAR ADA MINUS DAN WARNA NORMAL (STREAMLIT NGEBACA MINUS = MERAH KALAU NORMAL)
 gain_rev_str = f"+{pct_gain_rev:,.2f}% Kenaikan" if pct_gain_rev > 0 else "0% Kenaikan"
 loss_rev_str = f"-{pct_lost_rev:,.2f}% Loss" if pct_lost_rev > 0 else "0% Loss"
 gain_pay_str = f"+{pct_gain_pay:,.2f}% Kenaikan" if pct_gain_pay > 0 else "0% Kenaikan"
