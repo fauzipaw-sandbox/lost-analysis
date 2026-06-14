@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import os
 import io
@@ -182,7 +183,6 @@ try:
         df_rev = pd.DataFrame()
         df_rev['Date'] = pd.to_datetime(df_rev_raw[rev_date], errors='coerce').dt.date
         df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.strip().str.upper()
-        # Filter anti-karat buat angka Revenue & Payload (ilangin Rp, %, koma)
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev].astype(str).str.replace(r'[Rp,\s]', '', regex=True), errors='coerce').fillna(0).astype('float32')
         df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay].astype(str).str.replace(r'[,\s]', '', regex=True), errors='coerce').fillna(0) / 1024).astype('float32')
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
@@ -214,12 +214,9 @@ try:
         
         df_avail = pd.DataFrame()
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
-        
-        # Ekstrak Site ID super aman (expand=False mencegah error jadi tabel)
         extracted_site = df_avail_raw[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})', expand=False)
         df_avail['Site_ID'] = extracted_site.fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
         
-        # Filter anti-karat khusus buat % dan koma di UME
         df_avail['Availability'] = pd.to_numeric(df_avail_raw[avail_val].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
         if avail_loss: 
             df_avail['Packet_Loss'] = pd.to_numeric(df_avail_raw[avail_loss].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
@@ -232,7 +229,6 @@ try:
 
         # C. Integrasi Data (Outer Join)
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
-        # DI SINI LOGIKA DOWN SITE (0% / 100% loss) DI-APPLY DENGAN BENAR
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
         df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
@@ -285,11 +281,13 @@ try:
         mask_active_pay = (df_merged['Availability'] > 0) & (df_merged['Actual_Payload'] > 0)
         df_merged.loc[mask_active_pay, 'Potential_Payload'] = df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
         
+        # PENGGUNAAN NUMPY MAXIMUM UNTUK MENCEGAH ERROR KOMBINASI DTYPE FLOAT32 VS FLOAT64
         mask_degraded = (df_merged['Availability'] < 0.95) | (df_merged['Packet_Loss'] > 0.05)
-        mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0)
-        mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0)
-        df_merged.loc[mask_degraded, 'Potential_Revenue'] = df_merged.loc[mask_degraded, 'Potential_Revenue'].combine(mapped_rev, max)
-        df_merged.loc[mask_degraded, 'Potential_Payload'] = df_merged.loc[mask_degraded, 'Potential_Payload'].combine(mapped_pay, max)
+        mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
+        mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
+        
+        df_merged.loc[mask_degraded, 'Potential_Revenue'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'], mapped_rev.loc[mask_degraded])
+        df_merged.loc[mask_degraded, 'Potential_Payload'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'], mapped_pay.loc[mask_degraded])
 
         # F. Kalkulasi Nilai Deviasi Kerugian (Lost)
         df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
@@ -544,4 +542,4 @@ styled_df = impact_df.head(2000)[display_cols].sort_values(by=['Date', 'Site_ID'
 st.dataframe(styled_df, use_container_width=True)
 
 # --- FOOTER SYSTEM ---
-st.markdown('<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">© 2026 | Network Loss Impact Analyzer - Network Operation & Productivity</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">© 2026 | Network Loss Impact Analyzer</div>', unsafe_allow_html=True)
