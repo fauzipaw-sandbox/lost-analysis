@@ -16,7 +16,6 @@ st.markdown("""
 <style>
     .stApp > header { background-color: transparent; border-top: 5px solid #EC2028; }
     
-    /* STYLING METRIC CARDS MENGGUNAKAN METRIC-CONTAINER */
     div[data-testid="metric-container"] { 
         padding: 15px 20px; 
         border-radius: 10px; 
@@ -123,7 +122,6 @@ if df_dapot.empty:
     st.error("⚠️ **KESALAHAN SISTEM**: Referensi data master Dapot tidak ditemukan pada server database. Harap lakukan inisialisasi data master.")
     st.stop()
 
-# Ekstraksi Parameter Nama dan Relasi Konektivitas Site Simpul Anakan
 col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
 name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
 
@@ -176,13 +174,14 @@ try:
         df_rev_raw.columns = clean_column_names(df_rev_raw)
         
         rev_date = [c for c in df_rev_raw.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()][0]
-        rev_site = [c for c in df_rev_raw.columns if 'site' in c.lower()][0]
+        rev_site_cands = [c for c in df_rev_raw.columns if 'site' in c.lower()]
+        rev_site = rev_site_cands[0] if rev_site_cands else df_rev_raw.columns[1]
         rev_rev = [c for c in df_rev_raw.columns if 'revenue' in c.lower()][0]
         rev_pay = [c for c in df_rev_raw.columns if 'payload' in c.lower()][0]
         
         df_rev = pd.DataFrame()
         df_rev['Date'] = pd.to_datetime(df_rev_raw[rev_date], errors='coerce').dt.date
-        df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.strip().str.upper()
+        df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_rev_raw[rev_site].astype(str).str.strip().str.upper())
         df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev].astype(str).str.replace(r'[Rp,\s]', '', regex=True), errors='coerce').fillna(0).astype('float32')
         df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay].astype(str).str.replace(r'[,\s]', '', regex=True), errors='coerce').fillna(0) / 1024).astype('float32')
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
@@ -207,19 +206,22 @@ try:
         df_avail_raw = pd.concat(dfs_avail, ignore_index=True)
         
         avail_date = [c for c in df_avail_raw.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
-        avail_site = 'managed_element' if 'managed_element' in df_avail_raw.columns else [c for c in df_avail_raw.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()][0]
+        avail_site_cands = [c for c in df_avail_raw.columns if 'element' in c.lower() or 'site' in c.lower()]
+        avail_site = avail_site_cands[0] if avail_site_cands else df_avail_raw.columns[1]
         avail_val = [c for c in df_avail_raw.columns if 'availability' in c.lower() or 'avail' in c.lower()][0]
         loss_val_list = [c for c in df_avail_raw.columns if 'loss' in c.lower()]
         avail_loss = loss_val_list[0] if loss_val_list else None
         
         df_avail = pd.DataFrame()
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
-        extracted_site = df_avail_raw[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})', expand=False)
-        df_avail['Site_ID'] = extracted_site.fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
+        df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
         
-        df_avail['Availability'] = pd.to_numeric(df_avail_raw[avail_val].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+        # PERBAIKAN: Konversi Koma ke Titik untuk format Indonesia, lalu ubah ke Float
+        avail_str = df_avail_raw[avail_val].astype(str).str.replace(r'[%a-zA-Z\s]', '', regex=True).str.replace(',', '.')
+        df_avail['Availability'] = pd.to_numeric(avail_str, errors='coerce')
         if avail_loss: 
-            df_avail['Packet_Loss'] = pd.to_numeric(df_avail_raw[avail_loss].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+            loss_str = df_avail_raw[avail_loss].astype(str).str.replace(r'[%a-zA-Z\s]', '', regex=True).str.replace(',', '.')
+            df_avail['Packet_Loss'] = pd.to_numeric(loss_str, errors='coerce')
         else: 
             df_avail['Packet_Loss'] = 1.0
             
@@ -285,7 +287,6 @@ try:
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        # PENGGUNAAN NUMPY MAXIMUM TANPA .values AGAR INDEX PANDAS TETAP AMAN DAN TIDAK CRASH
         df_merged.loc[mask_degraded, 'Potential_Revenue'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'], mapped_rev.loc[mask_degraded]).astype('float32')
         df_merged.loc[mask_degraded, 'Potential_Payload'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'], mapped_pay.loc[mask_degraded]).astype('float32')
 
@@ -429,7 +430,12 @@ c6.metric("Trafik Aktual Terproses", f"{tot_act_pay:,.0f} GB")
 st.divider()
 
 # --- 10. DIAGRAM TREN HISTORIS HARIAN DENGAN POP-UP DETAIL ---
-st.write("### 📊 Kurva Tren Fluktuasi Harian")
+col_tr1, col_tr2 = st.columns([3, 1])
+with col_tr1:
+    st.write("### 📊 Kurva Tren Fluktuasi Harian")
+with col_tr2:
+    show_aggregate = st.toggle("📈 Tampilkan Garis Total Agregat", value=True, help="Matikan opsi ini untuk melihat detail grafik per site dengan lebih jelas (menghindari skala sumbu Y yang terlalu besar).")
+
 trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
     'Actual_Revenue': 'sum', 'Potential_Revenue': 'sum', 'Lost_Revenue': 'sum',
     'Actual_Payload': 'sum', 'Potential_Payload': 'sum', 'Lost_Payload': 'sum',
@@ -450,7 +456,7 @@ def buat_grafik(df, x_col, y_col, tipe):
     for c in cols_to_agg:
         if c not in df_plot.columns: df_plot[c] = 0
             
-    if len(df['Site_ID'].unique()) > 20:
+    if show_aggregate and len(df['Site_ID'].unique()) > 1:
         if tipe in ['rev', 'pay']:
             df_agg = df_plot.groupby(x_col)[cols_to_agg].sum(numeric_only=True).reset_index()
             df_agg_mean = df_plot.groupby(x_col)[['Availability_Pct', 'Packet_Loss_Pct']].mean(numeric_only=True).reset_index()
