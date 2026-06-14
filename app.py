@@ -72,7 +72,7 @@ with st.expander("📖 Panduan Penggunaan & Tautan Sumber Data", expanded=False)
     st.markdown("""
     ### 🚀 Prosedur Operasional Sistem:
     1. **Validasi Data Master**: Sistem secara otomatis memuat data hierarki wilayah dan konektivitas site simpul langsung dari server database utama.
-    2. **Pemuetan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
+    2. **Pemuatan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
     3. **Optimalisasi Filter Multilevel**: Parameter filter wilayah akan menyesuaikan secara dinamis setelah berkas performa harian berhasil diproses pada memori lokal.
     """)
     st.write("---")
@@ -201,6 +201,18 @@ with col_up1:
 with col_up2:
     file_avail = st.file_uploader("📡 Data Availability Berkala / UME (Dapat Memuat Banyak File)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
+# --- FITUR BARU: SAKELAR KONTROL DATA KOSONG UME ---
+st.write("---")
+st.write("### ⚙️ Konfigurasi Logika Perhitungan Data")
+ume_blank_logic = st.radio(
+    "Jika terdapat sel data yang kosong (blank) pada berkas UME, bagaimana sistem harus mengasumsikan status site tersebut?",
+    options=["Mati Total (Availability 0%, Packet Loss 100%)", "Sehat Normal (Availability 100%, Packet Loss 0%)"],
+    index=0,
+    help="Opsi ini menentukan cara aplikasi menangani baris site yang tercatat di UME namun tidak memiliki nilai persentase."
+)
+is_ume_blank_down = ume_blank_logic.startswith("Mati")
+st.write("---")
+
 if not file_rev or not file_avail:
     st.info("Informasi: Menunggu proses unggahan berkas berkala untuk melakukan kalkulasi otomatis.")
     st.stop()
@@ -224,7 +236,6 @@ try:
         df_rev['Actual_Revenue'] = robust_numeric_clean(df_rev_raw[rev_rev], 0.0)
         df_rev['Actual_Payload'] = robust_numeric_clean(df_rev_raw[rev_pay], 0.0) / 1024.0
         
-        # Agregasi Sum Harian (Mencegah kehilangan data multiplikasi baris)
         df_rev = df_rev.groupby(['Site_ID', 'Date'], as_index=False).agg({'Actual_Revenue': 'sum', 'Actual_Payload': 'sum'})
         del df_rev_raw
 
@@ -256,22 +267,23 @@ try:
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
         
-        # Simpan nilai mentah tanpa fillna dulu untuk membaca keaslian skala
         df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], np.nan)
         if avail_loss: 
             df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], np.nan)
         else: 
             df_avail['Packet_Loss'] = 0.0
 
-        # KOREKSI SKALA AWAL (Sebelum digabungkan agar tidak merusak data pasca-merge)
         if df_avail['Availability'].max() > 1.0: df_avail['Availability'] = df_avail['Availability'] / 100.0
         if df_avail['Packet_Loss'].max() > 1.0: df_avail['Packet_Loss'] = df_avail['Packet_Loss'] / 100.0
         
-        # Isi sisa data kosong UME asli (Jika baris terekam tapi nilainya Null/NaN)
-        df_avail['Availability'] = df_avail['Availability'].fillna(0.0) # Down total
-        df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(1.0)   # Loss total
+        # Eksekusi Logika Opsi UI untuk Sel UME yang kosong
+        if is_ume_blank_down:
+            df_avail['Availability'] = df_avail['Availability'].fillna(0.0) 
+            df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(1.0)   
+        else:
+            df_avail['Availability'] = df_avail['Availability'].fillna(1.0) 
+            df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(0.0)   
 
-        # Agregasi Rata-Rata Harian (Mencegah kerusakan duplikasi baris jam/cell)
         df_avail = df_avail.groupby(['Site_ID', 'Date'], as_index=False).agg({'Availability': 'mean', 'Packet_Loss': 'mean'})
         del df_avail_raw
         gc.collect()
@@ -333,7 +345,6 @@ try:
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        # PEMUTAKHIRAN BERKELAS: Penggunaan np.where untuk menjamin anti-error tipe data float32/float64
         df_merged['Potential_Revenue'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Revenue'], mapped_rev), df_merged['Potential_Revenue']).astype('float32')
         df_merged['Potential_Payload'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Payload'], mapped_pay), df_merged['Potential_Payload']).astype('float32')
 
