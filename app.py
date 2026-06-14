@@ -57,4 +57,489 @@ with col_logo:
 
 st.write("Analisis Aktual, Potensi (Gain), dan Nilai Kerugian (Lost) Performa Site Secara Real-Time.")
 
-... (rest of the code identically updated)
+def clean_column_names(df):
+    cols = df.columns.astype(str).str.lower()
+    cols = cols.str.replace(' ', '_')
+    cols = cols.str.replace(r'[^a-zA-Z0-9_]', '', regex=True)
+    return cols
+
+# --- KONEKSI SISTEM DATABASE ---
+conn = st.connection("database", type="sql")
+engine = conn.engine
+
+# --- PANDUAN OPERASIONAL & TAUTAN UNDUHAN DATA ---
+with st.expander("📖 Panduan Penggunaan & Tautan Sumber Data", expanded=False):
+    st.markdown("""
+    ### 🚀 Prosedur Operasional Sistem:
+    1. **Validasi Data Master**: Sistem secara otomatis memuat data hierarki wilayah dan konektivitas site simpul langsung dari server database utama.
+    2. **Pemuatan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
+    3. **Optimalisasi Filter Multilevel**: Parameter filter wilayah akan menyesuaikan secara dinamis setelah berkas performa harian berhasil diproses pada memori lokal.
+    """)
+    st.write("---")
+    st.write("📂 **Direktori Unduhan Sumber Data Operasional:**")
+    st.markdown("- **Sumber Data Revenue (NDM):** [Klik Tautan Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=XEgyKt)")
+    st.markdown("- **Sumber Data Availability (UME):** [Klik Tautan Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=lBlpJf)")
+
+# --- OPSI SINKRONISASI DATA MASTER (OPSIONAL) ---
+with st.expander("⚙️ Sinkronisasi Master Data Dapot Server (Opsional)"):
+    st.warning("Perhatian: Tindakan ini akan memperbarui keseluruhan struktur referensi data master Dapot pada server database pusat.")
+    file_dapot_upload = st.file_uploader("📋 Unggah Berkas Master Dapot Baru", type=["csv", "xlsx", "xls"])
+    if st.button("💾 Perbarui Master Data Pada Server", type="primary"):
+        if file_dapot_upload is not None:
+            with st.spinner("Mengirimkan pembaruan data ke server..."):
+                try:
+                    df_dapot_new = pd.read_csv(file_dapot_upload) if file_dapot_upload.name.endswith('.csv') else pd.read_excel(file_dapot_upload)
+                    df_dapot_new.columns = clean_column_names(df_dapot_new)
+                    with engine.connect() as con:
+                        try:
+                            con.execute(text("TRUNCATE TABLE dapot_data;"))
+                            con.commit()
+                        except: pass
+                    df_dapot_new.to_sql('dapot_data', engine, if_exists='append', index=False, chunksize=5000)
+                    st.success("✅ Struktur data master Dapot pada server berhasil diperbarui.")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal memproses pembaruan data master: {e}")
+        else:
+            st.warning("Silakan pilih berkas data master terlebih dahulu sebelum melakukan proses penyimpanan.")
+
+st.divider()
+
+# --- LOAD DATA MASTER DAPOT ---
+@st.cache_data(ttl="1h")
+def load_database_dapot():
+    try:
+        df = conn.query("SELECT * FROM dapot_data;", ttl="1h")
+        if 'site_id' in df.columns: 
+            df['site_id'] = df['site_id'].astype(str).str.strip().str.upper()
+        return df
+    except Exception: 
+        return pd.DataFrame()
+
+df_dapot = load_database_dapot()
+
+if df_dapot.empty:
+    st.error("⚠️ **KESALAHAN SISTEM**: Referensi data master Dapot tidak ditemukan pada server database. Harap lakukan inisialisasi data master.")
+    st.stop()
+
+# Ekstraksi Parameter Nama dan Relasi Konektivitas Site Simpul Anakan
+col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
+name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
+
+site_mapping_temp = {}
+col_simpul = [c for c in df_dapot.columns if ('simpul' in c.lower() or 'hub' in c.lower() or 'induk' in c.lower()) and 'jumlah' not in c.lower()]
+for c_simpul in col_simpul:
+    for _, row in df_dapot.dropna(subset=[c_simpul]).iterrows():
+        parent_raw = str(row[c_simpul]).upper()
+        child_site = str(row['site_id']).strip().upper()
+        match = re.search(r'([A-Z]{3}\d{3})', parent_raw)
+        if match:
+            parent_site = match.group(1)
+            if parent_site != child_site:
+                if parent_site not in site_mapping_temp: site_mapping_temp[parent_site] = set()
+                site_mapping_temp[parent_site].add(child_site)
+
+col_anakan = [c for c in df_dapot.columns if 'anakan' in c.lower() and 'jumlah' not in c.lower()]
+for c_anak in col_anakan:
+    for _, row in df_dapot.dropna(subset=[c_anak]).iterrows():
+        parent_site = str(row['site_id']).strip().upper()
+        anak_raw = str(row[c_anak]).upper()
+        anak_list = [x.strip() for x in anak_raw.split(',')]
+        if parent_site not in site_mapping_temp: site_mapping_temp[parent_site] = set()
+        for a in anak_list:
+            match = re.search(r'([A-Z]{3}\d{3})', a)
+            if match: site_mapping_temp[parent_site].add(match.group(1))
+
+site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
+
+
+# --- 4. PANEL UNGGAHAN BERKAS OPERASIONAL (LOCAL RAM) ---
+st.write("### 📂 Unggah Berkas Performa Berkala")
+col_up1, col_up2 = st.columns(2)
+
+with col_up1:
+    file_rev = st.file_uploader("📦 Data Revenue Berkala (Dapat Memuat Banyak File)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+with col_up2:
+    file_avail = st.file_uploader("📡 Data Availability Berkala / UME (Dapat Memuat Banyak File)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+
+if not file_rev or not file_avail:
+    st.info("Informasi: Menunggu proses unggahan berkas berkala untuk melakukan kalkulasi otomatis.")
+    st.stop()
+
+# --- 5. PEMROSESAN DATA PADA MEMORI LOKAL ---
+try:
+    with st.spinner("Sedang melakukan kalkulasi parameter loss pada memori lokal..."):
+        # A. Penggabungan Berkas Data Revenue
+        dfs_rev = [pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f) for f in file_rev]
+        df_rev_raw = pd.concat(dfs_rev, ignore_index=True)
+        df_rev_raw.columns = clean_column_names(df_rev_raw)
+        
+        rev_date = [c for c in df_rev_raw.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()][0]
+        rev_site = [c for c in df_rev_raw.columns if 'site' in c.lower()][0]
+        rev_rev = [c for c in df_rev_raw.columns if 'revenue' in c.lower()][0]
+        rev_pay = [c for c in df_rev_raw.columns if 'payload' in c.lower()][0]
+        
+        df_rev = pd.DataFrame()
+        df_rev['Date'] = pd.to_datetime(df_rev_raw[rev_date], errors='coerce').dt.date
+        df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.strip().str.upper()
+        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev].astype(str).str.replace(r'[Rp,\s]', '', regex=True), errors='coerce').fillna(0).astype('float32')
+        df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay].astype(str).str.replace(r'[,\s]', '', regex=True), errors='coerce').fillna(0) / 1024).astype('float32')
+        df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
+        del df_rev_raw
+
+        # B. Penggabungan Berkas Data Availability (UME)
+        dfs_avail = []
+        for f in file_avail:
+            if f.name.endswith('.csv'): df_t = pd.read_csv(f)
+            else:
+                xls_avail = pd.ExcelFile(f)
+                sheet_target = xls_avail.sheet_names[0]
+                for sheet in xls_avail.sheet_names:
+                    df_cek = pd.read_excel(xls_avail, sheet_name=sheet, nrows=1)
+                    if any('Begin Time' in col or 'begin' in str(col).lower() for col in df_cek.columns):
+                        sheet_target = sheet
+                        break
+                df_t = pd.read_excel(xls_avail, sheet_name=sheet_target)
+            df_t.columns = clean_column_names(df_t)
+            dfs_avail.append(df_t)
+            
+        df_avail_raw = pd.concat(dfs_avail, ignore_index=True)
+        
+        avail_date = [c for c in df_avail_raw.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
+        avail_site = 'managed_element' if 'managed_element' in df_avail_raw.columns else [c for c in df_avail_raw.columns if ('element' in c.lower() or 'site' in c.lower()) and 'id' not in c.lower()][0]
+        avail_val = [c for c in df_avail_raw.columns if 'availability' in c.lower() or 'avail' in c.lower()][0]
+        loss_val_list = [c for c in df_avail_raw.columns if 'loss' in c.lower()]
+        avail_loss = loss_val_list[0] if loss_val_list else None
+        
+        df_avail = pd.DataFrame()
+        df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
+        extracted_site = df_avail_raw[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})', expand=False)
+        df_avail['Site_ID'] = extracted_site.fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
+        
+        df_avail['Availability'] = pd.to_numeric(df_avail_raw[avail_val].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+        if avail_loss: 
+            df_avail['Packet_Loss'] = pd.to_numeric(df_avail_raw[avail_loss].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+        else: 
+            df_avail['Packet_Loss'] = 1.0
+            
+        df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
+        del df_avail_raw
+        gc.collect()
+
+        # C. Integrasi Data (Outer Join)
+        df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
+        df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
+        df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)
+        df_merged = df_merged.dropna(subset=['Date'])
+
+        # Integrasi Atribut Wilayah Melalui Referensi Dapot Master
+        dept_col = [c for c in df_dapot.columns if 'nop' in c.lower() or 'dept' in c.lower() or 'departemen' in c.lower()]
+        dept_col = dept_col[0] if dept_col else None
+        kab_col = [c for c in df_dapot.columns if 'kab' in c.lower() or 'kota' in c.lower()]
+        kab_col = kab_col[0] if kab_col else None
+        kec_col = [c for c in df_dapot.columns if 'kec' in c.lower()]
+        kec_col = kec_col[0] if kec_col else None
+        
+        extra_cols = ['site_name', 'site_class', 'pln__non_pln', 'power_classification', 'site_simpul', 'hub_site']
+        cols_to_merge = ['site_id'] + [c for c in extra_cols if c in df_dapot.columns]
+        if dept_col: cols_to_merge.append(dept_col)
+        if kab_col: cols_to_merge.append(kab_col)
+        if kec_col: cols_to_merge.append(kec_col)
+        
+        df_dapot_u = df_dapot[cols_to_merge].drop_duplicates(subset=['site_id'], keep='last')
+        df_merged = pd.merge(df_merged, df_dapot_u, left_on='Site_ID', right_on='site_id', how='left')
+        
+        if dept_col: df_merged.rename(columns={dept_col: 'Departemen'}, inplace=True)
+        if kab_col: df_merged.rename(columns={kab_col: 'Kabupaten'}, inplace=True)
+        if kec_col: df_merged.rename(columns={kec_col: 'Kecamatan'}, inplace=True)
+            
+        df_merged['Departemen'] = df_merged.get('Departemen', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
+        df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
+        df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
+
+        # D. Koreksi Skala Data (Persentase ke Desimal pecahan)
+        if df_merged['Availability'].max() > 1.0: df_merged['Availability'] = df_merged['Availability'] / 100.0
+        if df_merged['Packet_Loss'].max() > 1.0: df_merged['Packet_Loss'] = df_merged['Packet_Loss'] / 100.0
+        df_merged['Availability'] = df_merged['Availability'].clip(0.0, 1.0)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].clip(0.0, 1.0)
+
+        # E. Kalkulasi Nilai Potensi Menggunakan Rata-Rata Baseline Sehat
+        healthy_mask = (df_merged['Availability'] >= 0.95) & (df_merged['Packet_Loss'] <= 0.05) & (df_merged['Actual_Revenue'] > 0)
+        baseline_rev = df_merged[healthy_mask].groupby('Site_ID')['Actual_Revenue'].mean()
+        baseline_pay = df_merged[healthy_mask].groupby('Site_ID')['Actual_Payload'].mean()
+        fallback_rev = df_merged[df_merged['Actual_Revenue'] > 0].groupby('Site_ID')['Actual_Revenue'].mean()
+        fallback_pay = df_merged[df_merged['Actual_Payload'] > 0].groupby('Site_ID')['Actual_Payload'].mean()
+
+        df_merged['Potential_Revenue'] = df_merged['Actual_Revenue'].astype('float32')
+        df_merged['Potential_Payload'] = df_merged['Actual_Payload'].astype('float32')
+        
+        mask_active_rev = (df_merged['Availability'] > 0) & (df_merged['Actual_Revenue'] > 0)
+        df_merged.loc[mask_active_rev, 'Potential_Revenue'] = (df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))).astype('float32')
+        mask_active_pay = (df_merged['Availability'] > 0) & (df_merged['Actual_Payload'] > 0)
+        df_merged.loc[mask_active_pay, 'Potential_Payload'] = (df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))).astype('float32')
+        
+        mask_degraded = (df_merged['Availability'] < 0.95) | (df_merged['Packet_Loss'] > 0.05)
+        mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
+        mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
+        
+        # PENGGUNAAN NUMPY MAXIMUM TANPA .values AGAR INDEX PANDAS TETAP AMAN DAN TIDAK CRASH
+        df_merged.loc[mask_degraded, 'Potential_Revenue'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'], mapped_rev.loc[mask_degraded]).astype('float32')
+        df_merged.loc[mask_degraded, 'Potential_Payload'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'], mapped_pay.loc[mask_degraded]).astype('float32')
+
+        # F. Kalkulasi Nilai Deviasi Kerugian (Lost)
+        df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
+        df_merged['Lost_Payload'] = df_merged['Actual_Payload'] - df_merged['Potential_Payload']
+        df_merged['Availability_Pct'] = df_merged['Availability'] * 100
+        df_merged['Packet_Loss_Pct'] = df_merged['Packet_Loss'] * 100
+
+except Exception as e:
+    st.error(f"Gagal mengolah berkas harian operasional. Log Detail: {e}")
+    st.stop()
+
+# --- 6. PARAMETER FILTER MULTILEVEL ---
+st.write("---")
+st.write("### ⚙️ Konfigurasi Filter Wilayah & Klasifikasi Site")
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+
+with col_f1:
+    min_date, max_date = df_merged['Date'].min(), df_merged['Date'].max()
+    default_start = max_date - datetime.timedelta(days=7)
+    if default_start < min_date: default_start = min_date
+    selected_dates = st.date_input("📅 Rentang Periode:", value=(default_start, max_date), min_value=min_date, max_value=max_date)
+
+start_date, end_date = selected_dates if len(selected_dates) == 2 else (selected_dates[0], selected_dates[0])
+df_date_filtered = df_merged[(df_merged['Date'] >= start_date) & (df_merged['Date'] <= end_date)].copy()
+df_periode = df_date_filtered.copy()
+
+with col_f2:
+    if 'Departemen' in df_periode.columns:
+        list_nop = sorted(df_periode[df_periode['Departemen'] != 'UNKNOWN']['Departemen'].unique().tolist())
+        default_nop = [n for n in list_nop if 'PALANGKARAYA' in n.upper()]
+        selected_nop = st.multiselect("🏢 Departemen / NOP:", options=list_nop, default=default_nop)
+    else: selected_nop = []
+
+if selected_nop: df_periode = df_periode[df_periode['Departemen'].isin(selected_nop)]
+
+with col_f3:
+    if 'Kabupaten' in df_periode.columns:
+        list_kab = sorted(df_periode[df_periode['Kabupaten'] != 'UNKNOWN']['Kabupaten'].unique().tolist())
+        selected_kab = st.multiselect("🏙️ Kabupaten / Kota:", options=list_kab)
+    else: selected_kab = []
+
+if selected_kab: df_periode = df_periode[df_periode['Kabupaten'].isin(selected_kab)]
+
+with col_f4:
+    if 'Kecamatan' in df_periode.columns:
+        list_kec = sorted(df_periode[df_periode['Kecamatan'] != 'UNKNOWN']['Kecamatan'].unique().tolist())
+        selected_kec = st.multiselect("🏘️ Kecamatan:", options=list_kec)
+    else: selected_kec = []
+
+if selected_kec: df_periode = df_periode[df_periode['Kecamatan'].isin(selected_kec)]
+
+# --- 7. PANEL ANALISIS SITE INDUK & ANAKAN ---
+list_sites = sorted(df_periode['Site_ID'].dropna().unique().tolist())
+dropdown_options = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_sites]
+
+selected_parents = st.multiselect("🔍 Pilih Site Induk (Hub):", options=dropdown_options, help="Pilih site induk untuk menampilkan data site anakan terkait.")
+
+if selected_parents:
+    all_related = set()
+    for s in selected_parents:
+        site_code = s.split(" - ")[0]
+        all_related.add(site_code)
+        all_related.update(site_mapping.get(site_code, []))
+        
+    list_site_terlibat = sorted(list(all_related))
+    opsi_fokus = [f"{s} - {name_mapping.get(s, 'Unknown')}" for s in list_site_terlibat]
+    fokus_site_selection = st.multiselect("🎯 Konfigurasi Pemantauan Spesifik Site (Induk & Anakan):", options=opsi_fokus, default=opsi_fokus)
+    
+    if not fokus_site_selection:
+        st.info("Informasi: Harap pilih minimal satu stasiun pemancar (site).")
+        st.stop()
+        
+    site_fokus_ids = [s.split(" - ")[0] for s in fokus_site_selection]
+    impact_df = df_date_filtered[df_date_filtered['Site_ID'].isin(site_fokus_ids)].copy()
+    parent_codes = [s.split(" - ")[0] for s in selected_parents]
+    impact_df['Keterangan'] = impact_df['Site_ID'].apply(lambda x: 'Induk (Parent)' if x in parent_codes else 'Anakan (Child)')
+else:
+    impact_df = df_periode.copy()
+    impact_df['Keterangan'] = 'Terfilter Berdasarkan Area'
+
+if impact_df.empty:
+    st.warning("Peringatan: Data tidak ditemukan berdasarkan perimeter filter saat ini.")
+    st.stop()
+
+# --- 8. VISUALISASI KONTRIBUTOR DEVIASI TERTINGGI (WORST CONTRIBUTOR) ---
+st.write("---")
+st.write(f"### 🚨 Kontributor Kerugian Tertinggi / Worst Contributor ({start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')})")
+col_w1, col_w2, col_w3 = st.columns(3)
+
+with col_w1:
+    if 'Kabupaten' in impact_df.columns:
+        worst_kab = impact_df[impact_df['Kabupaten'] != 'UNKNOWN'].groupby('Kabupaten')['Lost_Revenue'].sum().nsmallest(5).abs().sort_values()
+        if not worst_kab.empty:
+            fig_kab = px.bar(worst_kab, x=worst_kab.values, y=worst_kab.index, orientation='h', title='Top 5 Kabupaten dengan Kerugian Tertinggi', color_discrete_sequence=['#EC2028'])
+            fig_kab.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
+            fig_kab.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            st.plotly_chart(fig_kab, use_container_width=True)
+
+with col_w2:
+    if 'Kecamatan' in impact_df.columns:
+        worst_kec = impact_df[impact_df['Kecamatan'] != 'UNKNOWN'].groupby('Kecamatan')['Lost_Revenue'].sum().nsmallest(5).abs().sort_values()
+        if not worst_kec.empty:
+            fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', title='Top 5 Kecamatan dengan Kerugian Tertinggi', color_discrete_sequence=['#ff7f0e'])
+            fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
+            fig_kec.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            st.plotly_chart(fig_kec, use_container_width=True)
+
+with col_w3:
+    worst_site = impact_df.groupby('Site_ID')['Lost_Revenue'].sum().nsmallest(5).abs().sort_values()
+    if not worst_site.empty:
+        fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', title='Top 5 Site dengan Kerugian Tertinggi', color_discrete_sequence=['#d62728'])
+        fig_site.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
+        fig_site.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+        st.plotly_chart(fig_site, use_container_width=True)
+
+# --- 9. RINGKASAN METRIK UTAMA ---
+st.write("---")
+st.write(f"### 📈 Ringkasan Parameter Performa Makro Wilayah Terpilih")
+tot_act_rev, tot_pot_rev, tot_lost_rev = impact_df['Actual_Revenue'].sum(), impact_df['Potential_Revenue'].sum(), impact_df['Lost_Revenue'].sum()
+tot_act_pay, tot_pot_pay, tot_lost_pay = impact_df['Actual_Payload'].sum(), impact_df['Potential_Payload'].sum(), impact_df['Lost_Payload'].sum()
+
+pct_lost_rev = (tot_lost_rev / tot_pot_rev * 100) if tot_pot_rev > 0 else 0
+pct_lost_pay = (tot_lost_pay / tot_pot_pay * 100) if tot_pot_pay > 0 else 0
+pct_gain_rev = ((tot_pot_rev - tot_act_rev) / tot_act_rev * 100) if tot_act_rev > 0 else 0
+pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay > 0 else 0
+
+st.write("##### 💰 Analisis Finansial (Revenue)")
+c1, c2, c3 = st.columns(3)
+c1.metric("🌟 Potensi Gain (Opsi Performa Maksimal 100%)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
+c2.metric("📉 Lost Revenue", f"-Rp {abs(tot_lost_rev):,.0f}", f"-{abs(pct_lost_rev):,.2f}% Penurunan")
+c3.metric("Pendapatan Aktual Terbuku", f"Rp {tot_act_rev:,.0f}")
+
+st.write("##### 📦 Analisis Trafik Data (Payload)")
+c4, c5, c6 = st.columns(3)
+c4.metric("🚀 Potensi Kapasitas Trafik Maksimal", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
+c5.metric("📉 Lost Payload", f"-{abs(tot_lost_pay):,.0f} GB", f"-{abs(pct_lost_pay):,.2f}% Penurunan")
+c6.metric("Trafik Aktual Terproses", f"{tot_act_pay:,.0f} GB")
+
+st.divider()
+
+# --- 10. DIAGRAM TREN HISTORIS HARIAN DENGAN POP-UP DETAIL ---
+st.write("### 📊 Kurva Tren Fluktuasi Harian")
+trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
+    'Actual_Revenue': 'sum', 'Potential_Revenue': 'sum', 'Lost_Revenue': 'sum',
+    'Actual_Payload': 'sum', 'Potential_Payload': 'sum', 'Lost_Payload': 'sum',
+    'Availability_Pct': 'mean', 'Packet_Loss_Pct': 'mean'
+}).reset_index()
+trend_df['Date_Str'] = trend_df['Date'].astype(str)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Revenue (Potensi)", "Lost Revenue", "Gain Payload (Potensi)", "Lost Payload", "Availability (%)", "Packet Loss (%)"])
+
+def buat_grafik(df, x_col, y_col, tipe):
+    df_plot = df.copy()
+    df_plot['Plot_Y'] = df_plot[y_col].abs() if 'Lost' in y_col else df_plot[y_col]
+    
+    cols_to_agg = ['Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue',
+                   'Actual_Payload', 'Potential_Payload', 'Lost_Payload',
+                   'Availability_Pct', 'Packet_Loss_Pct', 'Plot_Y']
+
+    for c in cols_to_agg:
+        if c not in df_plot.columns: df_plot[c] = 0
+            
+    if len(df['Site_ID'].unique()) > 20:
+        if tipe in ['rev', 'pay']:
+            df_agg = df_plot.groupby(x_col)[cols_to_agg].sum(numeric_only=True).reset_index()
+            df_agg_mean = df_plot.groupby(x_col)[['Availability_Pct', 'Packet_Loss_Pct']].mean(numeric_only=True).reset_index()
+            df_agg['Availability_Pct'] = df_agg_mean['Availability_Pct']
+            df_agg['Packet_Loss_Pct'] = df_agg_mean['Packet_Loss_Pct']
+        else:
+            df_agg = df_plot.groupby(x_col)[cols_to_agg].mean(numeric_only=True).reset_index()
+            
+        df_agg['Site_ID'] = 'TOTAL AGREGAT AREA'
+        cols_to_keep = [x_col, 'Site_ID'] + cols_to_agg
+        df_final = pd.concat([df_plot[cols_to_keep], df_agg[cols_to_keep]], ignore_index=True)
+    else:
+        df_final = df_plot
+
+    df_final['Lost_Revenue_Abs'] = df_final['Lost_Revenue'].abs()
+    df_final['Lost_Payload_Abs'] = df_final['Lost_Payload'].abs()
+
+    if tipe == 'rev':
+        hover_data = ['Potential_Revenue', 'Lost_Revenue_Abs', 'Actual_Revenue', 'Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[3]:.2f}%<br>⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>🌟 Potensi Gain: Rp %{customdata[0]:,.0f}<br>📉 Loss: -Rp %{customdata[1]:,.0f}<br>💰 Aktual: Rp %{customdata[2]:,.0f}<extra></extra>"
+    elif tipe == 'pay':
+        hover_data = ['Potential_Payload', 'Lost_Payload_Abs', 'Actual_Payload', 'Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[3]:.2f}%<br>⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>🚀 Potensi Gain: %{customdata[0]:,.0f} GB<br>📉 Loss: -%{customdata[1]:,.0f} GB<br>📦 Aktual: %{customdata[2]:,.0f} GB<extra></extra>"
+    else:
+        hover_data = ['Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[0]:.2f}%<br>⚠️ Packet Loss: %{customdata[1]:.2f}%<extra></extra>"
+    
+    fig = px.line(df_final, x=x_col, y='Plot_Y', color='Site_ID', markers=True, line_shape='spline', custom_data=hover_data)
+    
+    for trace in fig.data:
+        if trace.name == 'TOTAL AGREGAT AREA':
+            trace.line.width = 4
+            trace.line.dash = 'dash'
+            trace.line.color = '#343a40'
+            trace.marker.symbol = 'diamond'
+            trace.marker.size = 10
+        else:
+            trace.line.width = 2
+            trace.marker.size = 6
+
+    fig.update_traces(hovertemplate=template)
+    fig.update_layout(
+        xaxis_title=None, 
+        yaxis_title=None, 
+        plot_bgcolor='white', 
+        xaxis=dict(showgrid=False, linecolor='lightgray'), 
+        yaxis=dict(showgrid=True, gridcolor='#f0f0f0')
+    )
+    
+    return fig
+
+with tab1: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'rev'), use_container_width=True)
+with tab2: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Revenue', 'rev'), use_container_width=True)
+with tab3: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Payload', 'pay'), use_container_width=True)
+with tab4: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Lost_Payload', 'pay'), use_container_width=True)
+with tab5: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Availability_Pct', 'pct'), use_container_width=True)
+with tab6: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Packet_Loss_Pct', 'pct'), use_container_width=True)
+
+st.divider()
+
+# --- 11. STRUKTUR TABEL DETIL OPERASIONAL ---
+st.write("### 🗄️ Lembar Rincian Data Performa Komprehensif Per Site")
+base_cols = ['Date', 'Site_ID', 'site_name', 'Keterangan', 'Departemen', 'Kabupaten', 'Kecamatan', 'Availability', 'Packet_Loss', 'Potential_Revenue', 'Lost_Revenue', 'Actual_Revenue', 'Potential_Payload', 'Lost_Payload', 'Actual_Payload']
+display_cols = [c for c in base_cols if c in impact_df.columns]
+
+col_t1, col_t2 = st.columns([1, 1])
+with col_t1:
+    if len(impact_df) > 2000: st.caption("⚠️ *Sistem membatasi kompilasi tabel maksimal 2000 baris awal untuk efisiensi render halaman web.*")
+with col_t2:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        impact_df.drop(columns=['site_id'], errors='ignore').to_excel(writer, index=False, sheet_name='Data_Loss_Impact')
+    st.download_button("📥 Ekspor Dokumentasi Komplit (Format Excel)", data=buffer.getvalue(), file_name="Data_Loss_Impact_Area_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+def get_red_maroon_style(ratio):
+    ratio = max(0, min(1, ratio)) 
+    r, g, b = int(255 - 127 * ratio), int(153 - 153 * ratio), int(153 - 153 * ratio)
+    txt_color = 'white' if ((0.299 * r + 0.587 * g + 0.114 * b) / 255) < 0.5 else 'black'
+    return f'background-color: #{r:02x}{g:02x}{b:02x}; color: {txt_color}; font-weight: bold;'
+
+styled_df = impact_df.head(2000)[display_cols].sort_values(by=['Date', 'Site_ID']).style.format({
+    'Availability': '{:.2%}', 'Packet_Loss': '{:.2%}', 'Potential_Revenue': 'Rp {:,.0f}', 'Actual_Revenue': 'Rp {:,.0f}', 'Potential_Payload': '{:,.0f} GB', 'Actual_Payload': '{:,.0f} GB',
+    'Lost_Revenue': lambda v: f"-Rp {abs(v):,.0f}" if v < 0 else "Rp 0",
+    'Lost_Payload': lambda v: f"-{abs(v):,.0f} GB" if v < 0 else "0 GB"
+}).apply(lambda s: ['background-color: #d4edda; color: #155724; font-weight: bold;' if v >= 0.99 else get_red_maroon_style((v - 0.99) / (s.min() - 0.99) if s.min() < 0.99 else 0) if pd.notna(v) else '' for v in s], subset=['Availability']
+).apply(lambda s: ['background-color: #d4edda; color: #155724; font-weight: bold;' if v < 0.001 else get_red_maroon_style((v - 0.001) / (s.max() - 0.001) if s.max() > 0.001 else 0) if pd.notna(v) else '' for v in s], subset=['Packet_Loss']
+).apply(lambda s: ['background-color: #f8d7da; color: #721c24; font-weight: bold;' if v < 0 else '' for v in s], subset=['Lost_Revenue', 'Lost_Payload'])
+
+st.dataframe(styled_df, use_container_width=True)
+
+# --- FOOTER SYSTEM ---
+st.markdown('<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">© 2026 | Network Loss Impact Analyzer - Network Operation & Productivity</div>', unsafe_allow_html=True)
