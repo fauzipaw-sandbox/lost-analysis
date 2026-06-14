@@ -14,14 +14,21 @@ st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 st.markdown("""
 <style>
     .stApp > header { background-color: transparent; border-top: 5px solid #EC2028; }
-    [data-testid="stMetric"] { background-color: #ffffff; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08); transition: transform 0.2s ease-in-out; }
+    [data-testid="stMetric"] { padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08); transition: transform 0.2s ease-in-out; }
     [data-testid="stMetric"]:hover { transform: translateY(-5px); }
-    [data-testid="column"]:nth-child(1) [data-testid="stMetric"] { border-left: 5px solid #28a745 !important; }
+    
+    /* TEMA KOLOM 1: POTENSI (SOFT GREEN) */
+    [data-testid="column"]:nth-child(1) [data-testid="stMetric"] { background-color: #f1f8e9 !important; border-left: 5px solid #28a745 !important; }
     [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] { color: #28a745 !important; }
-    [data-testid="column"]:nth-child(2) [data-testid="stMetric"] { border-left: 5px solid #EC2028 !important; }
+    
+    /* TEMA KOLOM 2: LOSS (SOFT RED) */
+    [data-testid="column"]:nth-child(2) [data-testid="stMetric"] { background-color: #fce4e4 !important; border-left: 5px solid #EC2028 !important; }
     [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"] { color: #EC2028 !important; }
-    [data-testid="column"]:nth-child(3) [data-testid="stMetric"] { border-left: 5px solid #0056b3 !important; }
+    
+    /* TEMA KOLOM 3: AKTUAL (SOFT BLUE) */
+    [data-testid="column"]:nth-child(3) [data-testid="stMetric"] { background-color: #e3f2fd !important; border-left: 5px solid #0056b3 !important; }
     [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"] { color: #0056b3 !important; }
+    
     [data-testid="stFileUploadDropzone"] { border: 2px dashed #EC2028; border-radius: 10px; background-color: #FCF4F4; }
 </style>
 """, unsafe_allow_html=True)
@@ -56,8 +63,8 @@ with st.expander("📖 Panduan Penggunaan & Tautan Sumber Data", expanded=False)
     """)
     st.write("---")
     st.write("📂 **Direktori Unduhan Sumber Data Operasional:**")
-    st.markdown("- **Sumber Data Revenue (NDM):** [Klik Link Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=XEgyKt)")
-    st.markdown("- **Sumber Data Availability (UME):** [Klik Link Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=lBlpJf)")
+    st.markdown("- **Sumber Data Revenue (NDM):** [Klik Tautan Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20NDM?csf=1&web=1&e=XEgyKt)")
+    st.markdown("- **Sumber Data Availability (UME):** [Klik Tautan Di Sini](https://365tsel-my.sharepoint.com/:f:/r/personal/fauzi_ramdani_telkomsel_co_id/Documents/Telkomsel/NOP%20Palangkaraya/Tracker/Payload%20Traffic%20Revenue%20UME?csf=1&web=1&e=lBlpJf)")
 
 # --- OPSI SINKRONISASI DATA MASTER (OPSIONAL) ---
 with st.expander("⚙️ Sinkronisasi Master Data Dapot Server (Opsional)"):
@@ -389,13 +396,15 @@ pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay 
 st.write("##### 💰 Analisis Finansial (Revenue)")
 c1, c2, c3 = st.columns(3)
 c1.metric("🌟 Potensi Gain (Opsi Performa Maksimal 100%)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
-c2.metric("📉 Lost Revenue", f"-Rp {abs(tot_lost_rev):,.0f}", f"{abs(pct_lost_rev):,.2f}% Penurunan")
+# DENGAN TANDA MINUS DI BAGIAN PERSENTASE, STREAMLIT AKAN MENAMPILKAN PANAH MERAH KE BAWAH (PENURUNAN)
+c2.metric("📉 Lost Revenue", f"-Rp {abs(tot_lost_rev):,.0f}", f"-{abs(pct_lost_rev):,.2f}% Penurunan")
 c3.metric("Pendapatan Aktual Terbuku", f"Rp {tot_act_rev:,.0f}")
 
 st.write("##### 📦 Analisis Trafik Data (Payload)")
 c4, c5, c6 = st.columns(3)
 c4.metric("🚀 Potensi Kapasitas Trafik Maksimal", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-c5.metric("📉 Lost Payload", f"-{abs(tot_lost_pay):,.0f} GB", f"{abs(pct_lost_pay):,.2f}% Penurunan")
+# DENGAN TANDA MINUS DI BAGIAN PERSENTASE, STREAMLIT AKAN MENAMPILKAN PANAH MERAH KE BAWAH (PENURUNAN)
+c5.metric("📉 Lost Payload", f"-{abs(tot_lost_pay):,.0f} GB", f"-{abs(pct_lost_pay):,.2f}% Penurunan")
 c6.metric("Trafik Aktual Terproses", f"{tot_act_pay:,.0f} GB")
 
 st.divider()
