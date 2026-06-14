@@ -201,18 +201,6 @@ with col_up1:
 with col_up2:
     file_avail = st.file_uploader("📡 Data Availability Berkala / UME (Dapat Memuat Banyak File)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
-# --- FITUR BARU: SAKELAR KONTROL DATA KOSONG UME ---
-st.write("---")
-st.write("### ⚙️ Konfigurasi Logika Perhitungan Data")
-ume_blank_logic = st.radio(
-    "Jika terdapat sel data yang kosong (blank) pada berkas UME, bagaimana sistem harus mengasumsikan status site tersebut?",
-    options=["Mati Total (Availability 0%, Packet Loss 100%)", "Sehat Normal (Availability 100%, Packet Loss 0%)"],
-    index=0,
-    help="Opsi ini menentukan cara aplikasi menangani baris site yang tercatat di UME namun tidak memiliki nilai persentase."
-)
-is_ume_blank_down = ume_blank_logic.startswith("Mati")
-st.write("---")
-
 if not file_rev or not file_avail:
     st.info("Informasi: Menunggu proses unggahan berkas berkala untuk melakukan kalkulasi otomatis.")
     st.stop()
@@ -267,23 +255,17 @@ try:
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
         
+        # Simpan nilai mentah tanpa fillna dulu untuk membaca keaslian skala
         df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], np.nan)
         if avail_loss: 
             df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], np.nan)
         else: 
             df_avail['Packet_Loss'] = 0.0
 
+        # KOREKSI SKALA AWAL (Sebelum digabungkan agar tidak merusak data pasca-merge)
         if df_avail['Availability'].max() > 1.0: df_avail['Availability'] = df_avail['Availability'] / 100.0
         if df_avail['Packet_Loss'].max() > 1.0: df_avail['Packet_Loss'] = df_avail['Packet_Loss'] / 100.0
         
-        # Eksekusi Logika Opsi UI untuk Sel UME yang kosong
-        if is_ume_blank_down:
-            df_avail['Availability'] = df_avail['Availability'].fillna(0.0) 
-            df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(1.0)   
-        else:
-            df_avail['Availability'] = df_avail['Availability'].fillna(1.0) 
-            df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(0.0)   
-
         df_avail = df_avail.groupby(['Site_ID', 'Date'], as_index=False).agg({'Availability': 'mean', 'Packet_Loss': 'mean'})
         del df_avail_raw
         gc.collect()
@@ -291,11 +273,22 @@ try:
         # C. Integrasi Data (Outer Join)
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
         
-        # ALIGNMENT PASCA JOIN: Jika data UME ga masuk tapi revenue jalan = Site Dianggap Sehat Alami
+        # --- LOGIKA CERDAS PENGISI KEKOSONGAN DATA UME ---
+        missing_ume = df_merged['Availability'].isna()
+        
+        # 1. Jika UME kosong, tapi ada Revenue (>0) -> Asumsi sistem UME telat menarik data, namun Site beroperasi SEHAT (100% Avail)
+        df_merged.loc[missing_ume & (df_merged['Actual_Revenue'] > 0), 'Availability'] = 1.0
+        df_merged.loc[missing_ume & (df_merged['Actual_Revenue'] > 0), 'Packet_Loss'] = 0.0
+        
+        # 2. Jika UME kosong, dan Revenue 0 atau NaN -> Asumsi Site mengalami kegagalan operasional / MATI TOTAL (0% Avail)
+        df_merged.loc[missing_ume & ((df_merged['Actual_Revenue'].isna()) | (df_merged['Actual_Revenue'] <= 0)), 'Availability'] = 0.0
+        df_merged.loc[missing_ume & ((df_merged['Actual_Revenue'].isna()) | (df_merged['Actual_Revenue'] <= 0)), 'Packet_Loss'] = 1.0
+
+        # Penyelarasan sisa NaN pada operasional
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0.0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0.0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
-        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
         # Integrasi Atribut Wilayah Melalui Referensi Dapot Master
@@ -336,21 +329,30 @@ try:
         df_merged['Potential_Revenue'] = df_merged['Actual_Revenue'].astype('float32')
         df_merged['Potential_Payload'] = df_merged['Actual_Payload'].astype('float32')
         
-        mask_active_rev = (df_merged['Availability'] > 0) & (df_merged['Actual_Revenue'] > 0)
-        df_merged.loc[mask_active_rev, 'Potential_Revenue'] = (df_merged['Actual_Revenue'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))).astype('float32')
-        mask_active_pay = (df_merged['Availability'] > 0) & (df_merged['Actual_Payload'] > 0)
-        df_merged.loc[mask_active_pay, 'Potential_Payload'] = (df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))).astype('float32')
+        # 1. Perhitungan Potensi untuk site yang hidup namun mengalami degradasi parameter
+        denom = df_merged['Availability'] * (1.0 - df_merged['Packet_Loss'])
+        mask_degraded = (denom > 0.0) & (denom < 1.0) & (df_merged['Actual_Revenue'] > 0)
         
-        mask_degraded = (df_merged['Availability'] < 0.95) | (df_merged['Packet_Loss'] > 0.05)
+        df_merged.loc[mask_degraded, 'Potential_Revenue'] = (df_merged.loc[mask_degraded, 'Actual_Revenue'] / denom.loc[mask_degraded]).astype('float32')
+        df_merged.loc[mask_degraded, 'Potential_Payload'] = (df_merged.loc[mask_degraded, 'Actual_Payload'] / denom.loc[mask_degraded]).astype('float32')
+        
+        # 2. Perhitungan Potensi untuk site yang sepenuhnya mati (0% Avail atau 0 Revenue)
+        mask_down = (df_merged['Availability'] <= 0.0) | (df_merged['Actual_Revenue'] <= 0.0)
+        
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        df_merged['Potential_Revenue'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Revenue'], mapped_rev), df_merged['Potential_Revenue']).astype('float32')
-        df_merged['Potential_Payload'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Payload'], mapped_pay), df_merged['Potential_Payload']).astype('float32')
+        df_merged.loc[mask_down, 'Potential_Revenue'] = mapped_rev.loc[mask_down]
+        df_merged.loc[mask_down, 'Potential_Payload'] = mapped_pay.loc[mask_down]
 
-        # F. Kalkulasi Nilai Deviasi Kerugian (Lost)
+        # F. Kalkulasi Nilai Deviasi Kerugian Operasional (Lost)
         df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
         df_merged['Lost_Payload'] = df_merged['Actual_Payload'] - df_merged['Potential_Payload']
+        
+        # Validasi logis agar tidak tercipta Gain pada kolom Loss
+        df_merged['Lost_Revenue'] = np.minimum(df_merged['Lost_Revenue'], 0.0)
+        df_merged['Lost_Payload'] = np.minimum(df_merged['Lost_Payload'], 0.0)
+        
         df_merged['Availability_Pct'] = df_merged['Availability'] * 100
         df_merged['Packet_Loss_Pct'] = df_merged['Packet_Loss'] * 100
 
