@@ -72,7 +72,7 @@ with st.expander("📖 Panduan Penggunaan & Tautan Sumber Data", expanded=False)
     st.markdown("""
     ### 🚀 Prosedur Operasional Sistem:
     1. **Validasi Data Master**: Sistem secara otomatis memuat data hierarki wilayah dan konektivitas site simpul langsung dari server database utama.
-    2. **Pemuatan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
+    2. **Pemuetan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
     3. **Optimalisasi Filter Multilevel**: Parameter filter wilayah akan menyesuaikan secara dinamis setelah berkas performa harian berhasil diproses pada memori lokal.
     """)
     st.write("---")
@@ -247,7 +247,9 @@ try:
         
         avail_date = find_date_column(df_avail_raw)
         avail_site = find_site_id_column(df_avail_raw)
-        avail_val = [c for c in df_avail_raw.columns if 'availability' in c.lower() or 'avail' in c.lower()][0]
+        
+        # RADAR DETEKSI KELOMPOK KOLOM AVAILABILITY (Mengakomodasi jika ada 2 kolom cell avail)
+        avail_cols = [c for c in df_avail_raw.columns if 'avail' in c.lower()]
         loss_val_list = [c for c in df_avail_raw.columns if 'loss' in c.lower()]
         avail_loss = loss_val_list[0] if loss_val_list else None
         
@@ -255,40 +257,31 @@ try:
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
         
-        # Simpan nilai mentah tanpa fillna dulu untuk membaca keaslian skala
-        df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], np.nan)
+        # Bersihkan skala masing-masing kolom avail sebelum dihitung rata-ratanya
+        if avail_cols:
+            for col in avail_cols:
+                df_avail_raw[col] = robust_numeric_clean(df_avail_raw[col], np.nan)
+                if df_avail_raw[col].max() > 1.0:
+                    df_avail_raw[col] = df_avail_raw[col] / 100.0
+            # AMBIL RATA-RATA DARI KEDUA/SEMUA KOLOM CELL AVAILABILITY
+            df_avail['Availability'] = df_avail_raw[avail_cols].mean(axis=1)
+        else:
+            df_avail['Availability'] = np.nan
+            
         if avail_loss: 
-            df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], np.nan)
+            df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], 0.0)
+            if df_avail['Packet_Loss'].max() > 1.0: df_avail['Packet_Loss'] = df_avail['Packet_Loss'] / 100.0
         else: 
             df_avail['Packet_Loss'] = 0.0
-
-        # KOREKSI SKALA AWAL (Sebelum digabungkan agar tidak merusak data pasca-merge)
-        if df_avail['Availability'].max() > 1.0: df_avail['Availability'] = df_avail['Availability'] / 100.0
-        if df_avail['Packet_Loss'].max() > 1.0: df_avail['Packet_Loss'] = df_avail['Packet_Loss'] / 100.0
-        
+            
         df_avail = df_avail.groupby(['Site_ID', 'Date'], as_index=False).agg({'Availability': 'mean', 'Packet_Loss': 'mean'})
         del df_avail_raw
         gc.collect()
 
-        # C. Integrasi Data (Outer Join)
+        # C. Integrasi Data (Outer Join) - BIARKAN DATA APA ADANYA TANPA IMPUTASI PAKSA
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
-        
-        # --- LOGIKA CERDAS PENGISI KEKOSONGAN DATA UME ---
-        missing_ume = df_merged['Availability'].isna()
-        
-        # 1. Jika UME kosong, tapi ada Revenue (>0) -> Asumsi sistem UME telat menarik data, namun Site beroperasi SEHAT (100% Avail)
-        df_merged.loc[missing_ume & (df_merged['Actual_Revenue'] > 0), 'Availability'] = 1.0
-        df_merged.loc[missing_ume & (df_merged['Actual_Revenue'] > 0), 'Packet_Loss'] = 0.0
-        
-        # 2. Jika UME kosong, dan Revenue 0 atau NaN -> Asumsi Site mengalami kegagalan operasional / MATI TOTAL (0% Avail)
-        df_merged.loc[missing_ume & ((df_merged['Actual_Revenue'].isna()) | (df_merged['Actual_Revenue'] <= 0)), 'Availability'] = 0.0
-        df_merged.loc[missing_ume & ((df_merged['Actual_Revenue'].isna()) | (df_merged['Actual_Revenue'] <= 0)), 'Packet_Loss'] = 1.0
-
-        # Penyelarasan sisa NaN pada operasional
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0.0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0.0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
-        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
         # Integrasi Atribut Wilayah Melalui Referensi Dapot Master
@@ -329,27 +322,22 @@ try:
         df_merged['Potential_Revenue'] = df_merged['Actual_Revenue'].astype('float32')
         df_merged['Potential_Payload'] = df_merged['Actual_Payload'].astype('float32')
         
-        # 1. Perhitungan Potensi untuk site yang hidup namun mengalami degradasi parameter
-        denom = df_merged['Availability'] * (1.0 - df_merged['Packet_Loss'])
-        mask_degraded = (denom > 0.0) & (denom < 1.0) & (df_merged['Actual_Revenue'] > 0)
+        # MATEMATIKA PERHITUNGAN REVENUE LOSS MURNI BERDASARKAN PARAMETER AVAILABILITY
+        mask_degraded = (df_merged['Availability'] > 0.0) & (df_merged['Availability'] < 1.0) & (df_merged['Actual_Revenue'] > 0)
+        df_merged.loc[mask_degraded, 'Potential_Revenue'] = (df_merged.loc[mask_degraded, 'Actual_Revenue'] / df_merged.loc[mask_degraded, 'Availability']).astype('float32')
+        df_merged.loc[mask_degraded, 'Potential_Payload'] = (df_merged.loc[mask_degraded, 'Actual_Payload'] / df_merged.loc[mask_degraded, 'Availability']).astype('float32')
         
-        df_merged.loc[mask_degraded, 'Potential_Revenue'] = (df_merged.loc[mask_degraded, 'Actual_Revenue'] / denom.loc[mask_degraded]).astype('float32')
-        df_merged.loc[mask_degraded, 'Potential_Payload'] = (df_merged.loc[mask_degraded, 'Actual_Payload'] / denom.loc[mask_degraded]).astype('float32')
-        
-        # 2. Perhitungan Potensi untuk site yang sepenuhnya mati (0% Avail atau 0 Revenue)
-        mask_down = (df_merged['Availability'] <= 0.0) | (df_merged['Actual_Revenue'] <= 0.0)
-        
+        mask_down = (df_merged['Availability'] <= 0.0)
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        df_merged.loc[mask_down, 'Potential_Revenue'] = mapped_rev.loc[mask_down]
-        df_merged.loc[mask_down, 'Potential_Payload'] = mapped_pay.loc[mask_down]
+        df_merged['Potential_Revenue'] = np.where(mask_down, mapped_rev, df_merged['Potential_Revenue']).astype('float32')
+        df_merged['Potential_Payload'] = np.where(mask_down, mapped_pay, df_merged['Potential_Payload']).astype('float32')
 
         # F. Kalkulasi Nilai Deviasi Kerugian Operasional (Lost)
         df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
         df_merged['Lost_Payload'] = df_merged['Actual_Payload'] - df_merged['Potential_Payload']
         
-        # Validasi logis agar tidak tercipta Gain pada kolom Loss
         df_merged['Lost_Revenue'] = np.minimum(df_merged['Lost_Revenue'], 0.0)
         df_merged['Lost_Payload'] = np.minimum(df_merged['Lost_Payload'], 0.0)
         
@@ -453,7 +441,7 @@ with col_w2:
         if not worst_kec.empty:
             fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', title='Top 5 Kecamatan dengan Kerugian Tertinggi', color_discrete_sequence=['#ff7f0e'])
             fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-            fig_kec.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kec, use_container_width=True)
 
 with col_w3:
