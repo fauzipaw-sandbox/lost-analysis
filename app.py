@@ -154,9 +154,9 @@ site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
 
 
 # --- FUNGSI DETEKSI DAN MEMBERSIHKAN ANGKA SECARA RELEVAN ---
-def robust_numeric_clean(series, default_val=0.0):
+def robust_numeric_clean(series, default_val=np.nan):
     if pd.api.types.is_numeric_dtype(series):
-        return series.fillna(default_val).astype('float32')
+        return series.astype('float32')
     s = series.astype(str).str.strip()
     s = s.str.replace(r'[Rp%\s]', '', regex=True)
     
@@ -223,7 +223,9 @@ try:
         df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_rev_raw[rev_site].astype(str).str.strip().str.upper())
         df_rev['Actual_Revenue'] = robust_numeric_clean(df_rev_raw[rev_rev], 0.0)
         df_rev['Actual_Payload'] = robust_numeric_clean(df_rev_raw[rev_pay], 0.0) / 1024.0
-        df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
+        
+        # Agregasi Sum Harian (Mencegah kehilangan data multiplikasi baris)
+        df_rev = df_rev.groupby(['Site_ID', 'Date'], as_index=False).agg({'Actual_Revenue': 'sum', 'Actual_Payload': 'sum'})
         del df_rev_raw
 
         # B. Penggabungan Berkas Data Availability (UME)
@@ -253,23 +255,34 @@ try:
         df_avail = pd.DataFrame()
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
-        df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], 100.0)
+        
+        # Simpan nilai mentah tanpa fillna dulu untuk membaca keaslian skala
+        df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], np.nan)
         if avail_loss: 
-            df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], 0.0)
+            df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], np.nan)
         else: 
             df_avail['Packet_Loss'] = 0.0
-            
-        df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
+
+        # KOREKSI SKALA AWAL (Sebelum digabungkan agar tidak merusak data pasca-merge)
+        if df_avail['Availability'].max() > 1.0: df_avail['Availability'] = df_avail['Availability'] / 100.0
+        if df_avail['Packet_Loss'].max() > 1.0: df_avail['Packet_Loss'] = df_avail['Packet_Loss'] / 100.0
+        
+        # Isi sisa data kosong UME asli (Jika baris terekam tapi nilainya Null/NaN)
+        df_avail['Availability'] = df_avail['Availability'].fillna(0.0) # Down total
+        df_avail['Packet_Loss'] = df_avail['Packet_Loss'].fillna(1.0)   # Loss total
+
+        # Agregasi Rata-Rata Harian (Mencegah kerusakan duplikasi baris jam/cell)
+        df_avail = df_avail.groupby(['Site_ID', 'Date'], as_index=False).agg({'Availability': 'mean', 'Packet_Loss': 'mean'})
         del df_avail_raw
         gc.collect()
 
         # C. Integrasi Data (Outer Join)
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
         
-        # Sesuai data: jika di UME ga kecatit tapi di revenue jalan, berarti status site hidup (Avail=100%, PL=0%)
+        # ALIGNMENT PASCA JOIN: Jika data UME ga masuk tapi revenue jalan = Site Dianggap Sehat Alami
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0.0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0.0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(100.0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(1.0)
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
@@ -298,9 +311,6 @@ try:
         df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
         df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
 
-        # D. Koreksi Skala Data (Konversi Pintar Persentase 0-100 ke Desimal 0-1)
-        if df_merged['Availability'].max() > 1.0: df_merged['Availability'] = df_merged['Availability'] / 100.0
-        if df_merged['Packet_Loss'].max() > 1.0: df_merged['Packet_Loss'] = df_merged['Packet_Loss'] / 100.0
         df_merged['Availability'] = df_merged['Availability'].clip(0.0, 1.0)
         df_merged['Packet_Loss'] = df_merged['Packet_Loss'].clip(0.0, 1.0)
 
@@ -323,8 +333,9 @@ try:
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        df_merged.loc[mask_degraded, 'Potential_Revenue'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'], mapped_rev.loc[mask_degraded]).astype('float32')
-        df_merged.loc[mask_degraded, 'Potential_Payload'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'], mapped_pay.loc[mask_degraded]).astype('float32')
+        # PEMUTAKHIRAN BERKELAS: Penggunaan np.where untuk menjamin anti-error tipe data float32/float64
+        df_merged['Potential_Revenue'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Revenue'], mapped_rev), df_merged['Potential_Revenue']).astype('float32')
+        df_merged['Potential_Payload'] = np.where(mask_degraded, np.maximum(df_merged['Potential_Payload'], mapped_pay), df_merged['Potential_Payload']).astype('float32')
 
         # F. Kalkulasi Nilai Deviasi Kerugian (Lost)
         df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
@@ -429,7 +440,7 @@ with col_w2:
         if not worst_kec.empty:
             fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', title='Top 5 Kecamatan dengan Kerugian Tertinggi', color_discrete_sequence=['#ff7f0e'])
             fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-            fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            fig_kec.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kec, use_container_width=True)
 
 with col_w3:
@@ -437,7 +448,7 @@ with col_w3:
     if not worst_site.empty:
         fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', title='Top 5 Site dengan Kerugian Tertinggi', color_discrete_sequence=['#d62728'])
         fig_site.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-        fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+        fig_site.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
         st.plotly_chart(fig_site, use_container_width=True)
 
 # --- 9. RINGKASAN METRIK UTAMA ---
