@@ -281,13 +281,16 @@ try:
         mask_active_pay = (df_merged['Availability'] > 0) & (df_merged['Actual_Payload'] > 0)
         df_merged.loc[mask_active_pay, 'Potential_Payload'] = df_merged['Actual_Payload'] / (df_merged['Availability'] * (1 - df_merged['Packet_Loss']))
         
-        # PENGGUNAAN NUMPY MAXIMUM UNTUK MENCEGAH ERROR KOMBINASI DTYPE FLOAT32 VS FLOAT64
+        # FIX EXPLICIT CONVERSION UNTUK MENCEGAH TYPE ERROR FLOAT32 VS FLOAT64 PADA NUMPY MAXIMUM
         mask_degraded = (df_merged['Availability'] < 0.95) | (df_merged['Packet_Loss'] > 0.05)
         mapped_rev = df_merged['Site_ID'].map(baseline_rev).fillna(df_merged['Site_ID'].map(fallback_rev)).fillna(0).astype('float32')
         mapped_pay = df_merged['Site_ID'].map(baseline_pay).fillna(df_merged['Site_ID'].map(fallback_pay)).fillna(0).astype('float32')
         
-        df_merged.loc[mask_degraded, 'Potential_Revenue'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'], mapped_rev.loc[mask_degraded])
-        df_merged.loc[mask_degraded, 'Potential_Payload'] = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'], mapped_pay.loc[mask_degraded])
+        rev_max_vals = np.maximum(df_merged.loc[mask_degraded, 'Potential_Revenue'].values, mapped_rev.loc[mask_degraded].values).astype('float32')
+        pay_max_vals = np.maximum(df_merged.loc[mask_degraded, 'Potential_Payload'].values, mapped_pay.loc[mask_degraded].values).astype('float32')
+        
+        df_merged.loc[mask_degraded, 'Potential_Revenue'] = rev_max_vals
+        df_merged.loc[mask_degraded, 'Potential_Payload'] = pay_max_vals
 
         # F. Kalkulasi Nilai Deviasi Kerugian (Lost)
         df_merged['Lost_Revenue'] = df_merged['Actual_Revenue'] - df_merged['Potential_Revenue']
@@ -542,4 +545,4 @@ styled_df = impact_df.head(2000)[display_cols].sort_values(by=['Date', 'Site_ID'
 st.dataframe(styled_df, use_container_width=True)
 
 # --- FOOTER SYSTEM ---
-st.markdown('<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">© 2026 | Network Loss Impact Analyzer</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #888888; font-size: 14px;">© 2026 | Network Loss Impact Analyzer - Network Operation & Productivity</div>', unsafe_allow_html=True)
