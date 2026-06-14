@@ -16,6 +16,7 @@ st.markdown("""
 <style>
     .stApp > header { background-color: transparent; border-top: 5px solid #EC2028; }
     
+    /* STYLING METRIC CARDS MENGGUNAKAN METRIC-CONTAINER */
     div[data-testid="metric-container"] { 
         padding: 15px 20px; 
         border-radius: 10px; 
@@ -62,7 +63,7 @@ def clean_column_names(df):
     cols = cols.str.replace(r'[^a-zA-Z0-9_]', '', regex=True)
     return cols
 
-# --- KONEKSI SISTEM DATABASE ---
+# --- KONEKSI SISTEM DATABASE PUSAT ---
 conn = st.connection("database", type="sql")
 engine = conn.engine
 
@@ -71,7 +72,7 @@ with st.expander("📖 Panduan Penggunaan & Tautan Sumber Data", expanded=False)
     st.markdown("""
     ### 🚀 Prosedur Operasional Sistem:
     1. **Validasi Data Master**: Sistem secara otomatis memuat data hierarki wilayah dan konektivitas site simpul langsung dari server database utama.
-    2. **Pemuatan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
+    2. **Pemuetan Berkas Berkala**: Unggah berkas berkala **Data Revenue** dan **Data Availability (UME)** pada kolom yang tersedia di bawah. Pengguna dapat mengunggah beberapa berkas sekaligus untuk cakupan data multi-bulan.
     3. **Optimalisasi Filter Multilevel**: Parameter filter wilayah akan menyesuaikan secara dinamis setelah berkas performa harian berhasil diproses pada memori lokal.
     """)
     st.write("---")
@@ -152,6 +153,45 @@ for c_anak in col_anakan:
 site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
 
 
+# --- FUNGSI DETEKSI DAN MEMBERSIHKAN ANGKA SECARA RELEVAN ---
+def robust_numeric_clean(series, default_val=0.0):
+    if pd.api.types.is_numeric_dtype(series):
+        return series.fillna(default_val).astype('float32')
+    s = series.astype(str).str.strip()
+    s = s.str.replace(r'[Rp%\s]', '', regex=True)
+    
+    def parse_value(val):
+        if not val or val.lower() in ['nan', 'none', 'null', '-']:
+            return default_val
+        val = re.sub(r'[^\d.,-]', '', val)
+        if not val:
+            return default_val
+        if ',' in val and '.' in val:
+            if val.rfind(',') > val.rfind('.'):
+                val = val.replace('.', '').replace(',', '.')
+            else:
+                val = val.replace(',', '')
+        elif ',' in val:
+            val = val.replace(',', '.')
+        try:
+            return float(val)
+        except:
+            return default_val
+            
+    return s.apply(parse_value).astype('float32')
+
+def find_site_id_column(df):
+    for col in df.columns:
+        if df[col].astype(str).str.contains(r'[A-Z]{3}\d{3}', case=False, na=False).any():
+            return col
+    cands = [c for c in df.columns if any(k in c.lower() for k in ['site', 'element', 'node', 'ne_'])]
+    return cands[0] if cands else df.columns[0]
+
+def find_date_column(df):
+    cands = [c for c in df.columns if any(k in c.lower() for k in ['date', 'time', 'periode', 'tanggal'])]
+    return cands[0] if cands else df.columns[0]
+
+
 # --- 4. PANEL UNGGAHAN BERKAS OPERASIONAL (LOCAL RAM) ---
 st.write("### 📂 Unggah Berkas Performa Berkala")
 col_up1, col_up2 = st.columns(2)
@@ -173,17 +213,16 @@ try:
         df_rev_raw = pd.concat(dfs_rev, ignore_index=True)
         df_rev_raw.columns = clean_column_names(df_rev_raw)
         
-        rev_date = [c for c in df_rev_raw.columns if 'periode' in c.lower() or 'tanggal' in c.lower() or 'date' in c.lower()][0]
-        rev_site_cands = [c for c in df_rev_raw.columns if 'site' in c.lower()]
-        rev_site = rev_site_cands[0] if rev_site_cands else df_rev_raw.columns[1]
+        rev_date = find_date_column(df_rev_raw)
+        rev_site = find_site_id_column(df_rev_raw)
         rev_rev = [c for c in df_rev_raw.columns if 'revenue' in c.lower()][0]
         rev_pay = [c for c in df_rev_raw.columns if 'payload' in c.lower()][0]
         
         df_rev = pd.DataFrame()
         df_rev['Date'] = pd.to_datetime(df_rev_raw[rev_date], errors='coerce').dt.date
         df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_rev_raw[rev_site].astype(str).str.strip().str.upper())
-        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev].astype(str).str.replace(r'[Rp,\s]', '', regex=True), errors='coerce').fillna(0).astype('float32')
-        df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay].astype(str).str.replace(r'[,\s]', '', regex=True), errors='coerce').fillna(0) / 1024).astype('float32')
+        df_rev['Actual_Revenue'] = robust_numeric_clean(df_rev_raw[rev_rev], 0.0)
+        df_rev['Actual_Payload'] = robust_numeric_clean(df_rev_raw[rev_pay], 0.0) / 1024.0
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         del df_rev_raw
 
@@ -205,9 +244,8 @@ try:
             
         df_avail_raw = pd.concat(dfs_avail, ignore_index=True)
         
-        avail_date = [c for c in df_avail_raw.columns if 'begin' in c.lower() or 'time' in c.lower() or 'date' in c.lower()][0]
-        avail_site_cands = [c for c in df_avail_raw.columns if 'element' in c.lower() or 'site' in c.lower()]
-        avail_site = avail_site_cands[0] if avail_site_cands else df_avail_raw.columns[1]
+        avail_date = find_date_column(df_avail_raw)
+        avail_site = find_site_id_column(df_avail_raw)
         avail_val = [c for c in df_avail_raw.columns if 'availability' in c.lower() or 'avail' in c.lower()][0]
         loss_val_list = [c for c in df_avail_raw.columns if 'loss' in c.lower()]
         avail_loss = loss_val_list[0] if loss_val_list else None
@@ -215,15 +253,11 @@ try:
         df_avail = pd.DataFrame()
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
         df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.upper().str.extract(r'([A-Z]{3}\d{3})', expand=False).fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
-        
-        # PERBAIKAN: Konversi Koma ke Titik untuk format Indonesia, lalu ubah ke Float
-        avail_str = df_avail_raw[avail_val].astype(str).str.replace(r'[%a-zA-Z\s]', '', regex=True).str.replace(',', '.')
-        df_avail['Availability'] = pd.to_numeric(avail_str, errors='coerce')
+        df_avail['Availability'] = robust_numeric_clean(df_avail_raw[avail_val], 100.0)
         if avail_loss: 
-            loss_str = df_avail_raw[avail_loss].astype(str).str.replace(r'[%a-zA-Z\s]', '', regex=True).str.replace(',', '.')
-            df_avail['Packet_Loss'] = pd.to_numeric(loss_str, errors='coerce')
+            df_avail['Packet_Loss'] = robust_numeric_clean(df_avail_raw[avail_loss], 0.0)
         else: 
-            df_avail['Packet_Loss'] = 1.0
+            df_avail['Packet_Loss'] = 0.0
             
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         del df_avail_raw
@@ -231,10 +265,12 @@ try:
 
         # C. Integrasi Data (Outer Join)
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
-        df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
-        df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
-        df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
-        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(1.0)
+        
+        # Sesuai data: jika di UME ga kecatit tapi di revenue jalan, berarti status site hidup (Avail=100%, PL=0%)
+        df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0.0)
+        df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0.0)
+        df_merged['Availability'] = df_merged['Availability'].fillna(100.0)
+        df_merged['Packet_Loss'] = df_merged['Packet_Loss'].fillna(0.0)
         df_merged = df_merged.dropna(subset=['Date'])
 
         # Integrasi Atribut Wilayah Melalui Referensi Dapot Master
@@ -262,7 +298,7 @@ try:
         df_merged['Kabupaten'] = df_merged.get('Kabupaten', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
         df_merged['Kecamatan'] = df_merged.get('Kecamatan', pd.Series('UNKNOWN', index=df_merged.index)).fillna('UNKNOWN').astype(str).str.upper()
 
-        # D. Koreksi Skala Data (Persentase ke Desimal pecahan)
+        # D. Koreksi Skala Data (Konversi Pintar Persentase 0-100 ke Desimal 0-1)
         if df_merged['Availability'].max() > 1.0: df_merged['Availability'] = df_merged['Availability'] / 100.0
         if df_merged['Packet_Loss'].max() > 1.0: df_merged['Packet_Loss'] = df_merged['Packet_Loss'] / 100.0
         df_merged['Availability'] = df_merged['Availability'].clip(0.0, 1.0)
@@ -393,7 +429,7 @@ with col_w2:
         if not worst_kec.empty:
             fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', title='Top 5 Kecamatan dengan Kerugian Tertinggi', color_discrete_sequence=['#ff7f0e'])
             fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-            fig_kec.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kec, use_container_width=True)
 
 with col_w3:
@@ -401,7 +437,7 @@ with col_w3:
     if not worst_site.empty:
         fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', title='Top 5 Site dengan Kerugian Tertinggi', color_discrete_sequence=['#d62728'])
         fig_site.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-        fig_site.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+        fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
         st.plotly_chart(fig_site, use_container_width=True)
 
 # --- 9. RINGKASAN METRIK UTAMA ---
