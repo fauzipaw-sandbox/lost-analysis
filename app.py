@@ -14,20 +14,33 @@ st.set_page_config(page_title="Network Loss Impact Analyzer", layout="wide")
 st.markdown("""
 <style>
     .stApp > header { background-color: transparent; border-top: 5px solid #EC2028; }
-    [data-testid="stMetric"] { padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08); transition: transform 0.2s ease-in-out; }
-    [data-testid="stMetric"]:hover { transform: translateY(-5px); }
+    
+    /* STYLING METRIC CARDS MENGGUNAKAN METRIC-CONTAINER */
+    div[data-testid="metric-container"] { 
+        padding: 15px 20px; 
+        border-radius: 10px; 
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08); 
+        transition: transform 0.2s ease-in-out; 
+    }
+    div[data-testid="metric-container"]:hover { transform: translateY(-5px); }
     
     /* TEMA KOLOM 1: POTENSI (SOFT GREEN) */
-    [data-testid="column"]:nth-child(1) [data-testid="stMetric"] { background-color: #f1f8e9 !important; border-left: 5px solid #28a745 !important; }
-    [data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] { color: #28a745 !important; }
+    div[data-testid="column"]:nth-of-type(1) div[data-testid="metric-container"] { 
+        background-color: #e8f5e9 !important; 
+        border-left: 5px solid #28a745 !important; 
+    }
     
     /* TEMA KOLOM 2: LOSS (SOFT RED) */
-    [data-testid="column"]:nth-child(2) [data-testid="stMetric"] { background-color: #fce4e4 !important; border-left: 5px solid #EC2028 !important; }
-    [data-testid="column"]:nth-child(2) [data-testid="stMetricValue"] { color: #EC2028 !important; }
+    div[data-testid="column"]:nth-of-type(2) div[data-testid="metric-container"] { 
+        background-color: #fde0dc !important; 
+        border-left: 5px solid #EC2028 !important; 
+    }
     
     /* TEMA KOLOM 3: AKTUAL (SOFT BLUE) */
-    [data-testid="column"]:nth-child(3) [data-testid="stMetric"] { background-color: #e3f2fd !important; border-left: 5px solid #0056b3 !important; }
-    [data-testid="column"]:nth-child(3) [data-testid="stMetricValue"] { color: #0056b3 !important; }
+    div[data-testid="column"]:nth-of-type(3) div[data-testid="metric-container"] { 
+        background-color: #e3f2fd !important; 
+        border-left: 5px solid #0056b3 !important; 
+    }
     
     [data-testid="stFileUploadDropzone"] { border: 2px dashed #EC2028; border-radius: 10px; background-color: #FCF4F4; }
 </style>
@@ -109,7 +122,7 @@ if df_dapot.empty:
     st.error("⚠️ **KESALAHAN SISTEM**: Referensi data master Dapot tidak ditemukan pada server database. Harap lakukan inisialisasi data master.")
     st.stop()
 
-# Rekstrak Parameter Nama dan Relasi Konektivitas Site Simpul Anakan
+# Ekstraksi Parameter Nama dan Relasi Konektivitas Site Simpul Anakan
 col_name = [c for c in df_dapot.columns if 'name' in c.lower()][0] if any('name' in c.lower() for c in df_dapot.columns) else 'site_id'
 name_mapping = dict(zip(df_dapot['site_id'], df_dapot[col_name].astype(str)))
 
@@ -140,7 +153,7 @@ for c_anak in col_anakan:
 site_mapping = {k: list(v) for k, v in site_mapping_temp.items()}
 
 
-# --- 4. PANEL UNGGALAN BERKAS OPERASIONAL (LOCAL RAM) ---
+# --- 4. PANEL UNGGAHAN BERKAS OPERASIONAL (LOCAL RAM) ---
 st.write("### 📂 Unggah Berkas Performa Berkala")
 col_up1, col_up2 = st.columns(2)
 
@@ -362,7 +375,7 @@ with col_w1:
         if not worst_kab.empty:
             fig_kab = px.bar(worst_kab, x=worst_kab.values, y=worst_kab.index, orientation='h', title='Top 5 Kabupaten dengan Kerugian Tertinggi', color_discrete_sequence=['#EC2028'])
             fig_kab.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-            fig_kab.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            fig_kab.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kab, use_container_width=True)
 
 with col_w2:
@@ -371,7 +384,7 @@ with col_w2:
         if not worst_kec.empty:
             fig_kec = px.bar(worst_kec, x=worst_kec.values, y=worst_kec.index, orientation='h', title='Top 5 Kecamatan dengan Kerugian Tertinggi', color_discrete_sequence=['#ff7f0e'])
             fig_kec.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-            fig_kec.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+            fig_kec.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
             st.plotly_chart(fig_kec, use_container_width=True)
 
 with col_w3:
@@ -379,7 +392,7 @@ with col_w3:
     if not worst_site.empty:
         fig_site = px.bar(worst_site, x=worst_site.values, y=worst_site.index, orientation='h', title='Top 5 Site dengan Kerugian Tertinggi', color_discrete_sequence=['#d62728'])
         fig_site.update_traces(hovertemplate="<b>%{y}</b><br>Lost Revenue: Rp %{x:,.0f}<extra></extra>")
-        fig_site.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
+        fig_site.update_layout(xaxis_title=None, yaxis_title=None, height=350, margin=dict(l=0, r=0, t=40, b=0), plot_bgcolor='white')
         st.plotly_chart(fig_site, use_container_width=True)
 
 # --- 9. RINGKASAN METRIK UTAMA ---
@@ -396,20 +409,18 @@ pct_gain_pay = ((tot_pot_pay - tot_act_pay) / tot_act_pay * 100) if tot_act_pay 
 st.write("##### 💰 Analisis Finansial (Revenue)")
 c1, c2, c3 = st.columns(3)
 c1.metric("🌟 Potensi Gain (Opsi Performa Maksimal 100%)", f"Rp {tot_pot_rev:,.0f}", f"+{pct_gain_rev:,.2f}% Kenaikan")
-# DENGAN TANDA MINUS DI BAGIAN PERSENTASE, STREAMLIT AKAN MENAMPILKAN PANAH MERAH KE BAWAH (PENURUNAN)
 c2.metric("📉 Lost Revenue", f"-Rp {abs(tot_lost_rev):,.0f}", f"-{abs(pct_lost_rev):,.2f}% Penurunan")
 c3.metric("Pendapatan Aktual Terbuku", f"Rp {tot_act_rev:,.0f}")
 
 st.write("##### 📦 Analisis Trafik Data (Payload)")
 c4, c5, c6 = st.columns(3)
 c4.metric("🚀 Potensi Kapasitas Trafik Maksimal", f"{tot_pot_pay:,.0f} GB", f"+{pct_gain_pay:,.2f}% Kenaikan")
-# DENGAN TANDA MINUS DI BAGIAN PERSENTASE, STREAMLIT AKAN MENAMPILKAN PANAH MERAH KE BAWAH (PENURUNAN)
 c5.metric("📉 Lost Payload", f"-{abs(tot_lost_pay):,.0f} GB", f"-{abs(pct_lost_pay):,.2f}% Penurunan")
 c6.metric("Trafik Aktual Terproses", f"{tot_act_pay:,.0f} GB")
 
 st.divider()
 
-# --- 10. DIAGRAM TREN HISTORIS HARIAN ---
+# --- 10. DIAGRAM TREN HISTORIS HARIAN DENGAN POP-UP DETAIL ---
 st.write("### 📊 Kurva Tren Fluktuasi Harian")
 trend_df = impact_df.groupby(['Date', 'Site_ID']).agg({
     'Actual_Revenue': 'sum', 'Potential_Revenue': 'sum', 'Lost_Revenue': 'sum',
@@ -421,17 +432,76 @@ trend_df['Date_Str'] = trend_df['Date'].astype(str)
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Revenue (Potensi)", "Lost Revenue", "Gain Payload (Potensi)", "Lost Payload", "Availability (%)", "Packet Loss (%)"])
 
 def buat_grafik(df, x_col, y_col, tipe):
-    if len(df['Site_ID'].unique()) > 20: 
-        if tipe in ['rev', 'pay']: df = df.groupby(x_col).sum(numeric_only=True).reset_index()
-        else: df = df.groupby(x_col).mean(numeric_only=True).reset_index()
-        df['Site_ID'] = 'TOTAL AGREGAT AREA'
-        
-    y_val = df[y_col].abs() if 'Lost' in y_col else df[y_col]
-    fig = px.line(df, x=x_col, y=y_val, color='Site_ID', markers=True, line_shape='spline')
-    if tipe == 'rev': fig.update_traces(hovertemplate="<b>%{x}</b><br>Nilai Nominal: Rp %{y:,.0f}<extra></extra>")
-    elif tipe == 'pay': fig.update_traces(hovertemplate="<b>%{x}</b><br>Volume Trafik: %{y:,.0f} GB<extra></extra>")
-    else: fig.update_traces(hovertemplate="<b>%{x}</b><br>Rasio Persentase: %{y:.2f}%<extra></extra>")
-    fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False, linecolor='lightgray'), yaxis=dict(showgrid=True, gridcolor='#f0f0f0'))
+    df_plot = df.copy()
+    
+    # Konversi Angka Minus Jadi Absolut Buat Tampilan Plot Utama
+    df_plot['Plot_Y'] = df_plot[y_col].abs() if 'Lost' in y_col else df_plot[y_col]
+    
+    cols_to_agg = ['Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue',
+                   'Actual_Payload', 'Potential_Payload', 'Lost_Payload',
+                   'Availability_Pct', 'Packet_Loss_Pct', 'Plot_Y']
+
+    for c in cols_to_agg:
+        if c not in df_plot.columns: df_plot[c] = 0
+            
+    # Hitung Agregat Area (Garis Tambahan)
+    if len(df['Site_ID'].unique()) > 20:
+        if tipe in ['rev', 'pay']:
+            df_agg = df_plot.groupby(x_col)[cols_to_agg].sum(numeric_only=True).reset_index()
+            # Khusus Avail & PL tetap pakai rata-rata meskipun chartnya revenue/payload
+            df_agg_mean = df_plot.groupby(x_col)[['Availability_Pct', 'Packet_Loss_Pct']].mean(numeric_only=True).reset_index()
+            df_agg['Availability_Pct'] = df_agg_mean['Availability_Pct']
+            df_agg['Packet_Loss_Pct'] = df_agg_mean['Packet_Loss_Pct']
+        else:
+            df_agg = df_plot.groupby(x_col)[cols_to_agg].mean(numeric_only=True).reset_index()
+            
+        df_agg['Site_ID'] = 'TOTAL AGREGAT AREA'
+        cols_to_keep = [x_col, 'Site_ID'] + cols_to_agg
+        df_final = pd.concat([df_plot[cols_to_keep], df_agg[cols_to_keep]], ignore_index=True)
+    else:
+        df_final = df_plot
+
+    # Variabel Absolut khusus buat Pop Up Hover
+    df_final['Lost_Revenue_Abs'] = df_final['Lost_Revenue'].abs()
+    df_final['Lost_Payload_Abs'] = df_final['Lost_Payload'].abs()
+
+    # Siapkan Custom Data untuk dimasukkan ke Hover
+    if tipe == 'rev':
+        hover_data = ['Potential_Revenue', 'Lost_Revenue_Abs', 'Actual_Revenue', 'Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[3]:.2f}%<br>⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>🌟 Potensi Gain: Rp %{customdata[0]:,.0f}<br>📉 Loss: -Rp %{customdata[1]:,.0f}<br>💰 Aktual: Rp %{customdata[2]:,.0f}<extra></extra>"
+    elif tipe == 'pay':
+        hover_data = ['Potential_Payload', 'Lost_Payload_Abs', 'Actual_Payload', 'Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[3]:.2f}%<br>⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>🚀 Potensi Gain: %{customdata[0]:,.0f} GB<br>📉 Loss: -%{customdata[1]:,.0f} GB<br>📦 Aktual: %{customdata[2]:,.0f} GB<extra></extra>"
+    else:
+        hover_data = ['Availability_Pct', 'Packet_Loss_Pct']
+        template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[0]:.2f}%<br>⚠️ Packet Loss: %{customdata[1]:.2f}%<extra></extra>"
+    
+    # Render Plotly dengan Custom Hover
+    fig = px.line(df_final, x=x_col, y='Plot_Y', color='Site_ID', markers=True, line_shape='spline', custom_data=hover_data)
+    
+    # Kustomisasi Garis Agregat agar berbeda dari site lainnya
+    for trace in fig.data:
+        if trace.name == 'TOTAL AGREGAT AREA':
+            trace.line.width = 4
+            trace.line.dash = 'dash'
+            trace.line.color = '#343a40'
+            trace.marker.symbol = 'diamond'
+            trace.marker.size = 10
+        else:
+            trace.line.width = 2
+            trace.marker.size = 6
+
+    fig.update_traces(hovertemplate=template)
+    
+    # HILANGKAN TEXT X & Y AXIS
+    fig.update_layout(
+        xaxis_title=None, 
+        yaxis_title=None, 
+        plot_bgcolor='white', 
+        xaxis=dict(showgrid=False, linecolor='lightgray'), 
+        yaxis=dict(showgrid=True, gridcolor='#f0f0f0')
+    )
+    
     return fig
 
 with tab1: st.plotly_chart(buat_grafik(trend_df, 'Date_Str', 'Potential_Revenue', 'rev'), use_container_width=True)
