@@ -182,8 +182,9 @@ try:
         df_rev = pd.DataFrame()
         df_rev['Date'] = pd.to_datetime(df_rev_raw[rev_date], errors='coerce').dt.date
         df_rev['Site_ID'] = df_rev_raw[rev_site].astype(str).str.strip().str.upper()
-        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev], errors='coerce').fillna(0).astype('float32')
-        df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay], errors='coerce').fillna(0) / 1024).astype('float32')
+        # Filter anti-karat buat angka Revenue & Payload (ilangin Rp, %, koma)
+        df_rev['Actual_Revenue'] = pd.to_numeric(df_rev_raw[rev_rev].astype(str).str.replace(r'[Rp,\s]', '', regex=True), errors='coerce').fillna(0).astype('float32')
+        df_rev['Actual_Payload'] = (pd.to_numeric(df_rev_raw[rev_pay].astype(str).str.replace(r'[,\s]', '', regex=True), errors='coerce').fillna(0) / 1024).astype('float32')
         df_rev = df_rev.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         del df_rev_raw
 
@@ -213,16 +214,25 @@ try:
         
         df_avail = pd.DataFrame()
         df_avail['Date'] = pd.to_datetime(df_avail_raw[avail_date], errors='coerce').dt.date
-        df_avail['Site_ID'] = df_avail_raw[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})')
-        df_avail['Availability'] = pd.to_numeric(df_avail_raw[avail_val], errors='coerce').fillna(0.0).astype('float32')
-        if avail_loss: df_avail['Packet_Loss'] = pd.to_numeric(df_avail_raw[avail_loss], errors='coerce').fillna(1.0).astype('float32')
-        else: df_avail['Packet_Loss'] = 1.0
+        
+        # Ekstrak Site ID super aman (expand=False mencegah error jadi tabel)
+        extracted_site = df_avail_raw[avail_site].astype(str).str.extract(r'([A-Z]{3}\d{3})', expand=False)
+        df_avail['Site_ID'] = extracted_site.fillna(df_avail_raw[avail_site].astype(str).str.strip().str.upper())
+        
+        # Filter anti-karat khusus buat % dan koma di UME
+        df_avail['Availability'] = pd.to_numeric(df_avail_raw[avail_val].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+        if avail_loss: 
+            df_avail['Packet_Loss'] = pd.to_numeric(df_avail_raw[avail_loss].astype(str).str.replace(r'[%,\s]', '', regex=True), errors='coerce')
+        else: 
+            df_avail['Packet_Loss'] = 1.0
+            
         df_avail = df_avail.drop_duplicates(subset=['Site_ID', 'Date'], keep='last')
         del df_avail_raw
         gc.collect()
 
         # C. Integrasi Data (Outer Join)
         df_merged = pd.merge(df_rev, df_avail, on=['Site_ID', 'Date'], how='outer')
+        # DI SINI LOGIKA DOWN SITE (0% / 100% loss) DI-APPLY DENGAN BENAR
         df_merged['Actual_Revenue'] = df_merged['Actual_Revenue'].fillna(0)
         df_merged['Actual_Payload'] = df_merged['Actual_Payload'].fillna(0)
         df_merged['Availability'] = df_merged['Availability'].fillna(0.0)
@@ -433,8 +443,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Gain Revenue (Potensi)", "Lost Re
 
 def buat_grafik(df, x_col, y_col, tipe):
     df_plot = df.copy()
-    
-    # Konversi Angka Minus Jadi Absolut Buat Tampilan Plot Utama
     df_plot['Plot_Y'] = df_plot[y_col].abs() if 'Lost' in y_col else df_plot[y_col]
     
     cols_to_agg = ['Actual_Revenue', 'Potential_Revenue', 'Lost_Revenue',
@@ -444,11 +452,9 @@ def buat_grafik(df, x_col, y_col, tipe):
     for c in cols_to_agg:
         if c not in df_plot.columns: df_plot[c] = 0
             
-    # Hitung Agregat Area (Garis Tambahan)
     if len(df['Site_ID'].unique()) > 20:
         if tipe in ['rev', 'pay']:
             df_agg = df_plot.groupby(x_col)[cols_to_agg].sum(numeric_only=True).reset_index()
-            # Khusus Avail & PL tetap pakai rata-rata meskipun chartnya revenue/payload
             df_agg_mean = df_plot.groupby(x_col)[['Availability_Pct', 'Packet_Loss_Pct']].mean(numeric_only=True).reset_index()
             df_agg['Availability_Pct'] = df_agg_mean['Availability_Pct']
             df_agg['Packet_Loss_Pct'] = df_agg_mean['Packet_Loss_Pct']
@@ -461,11 +467,9 @@ def buat_grafik(df, x_col, y_col, tipe):
     else:
         df_final = df_plot
 
-    # Variabel Absolut khusus buat Pop Up Hover
     df_final['Lost_Revenue_Abs'] = df_final['Lost_Revenue'].abs()
     df_final['Lost_Payload_Abs'] = df_final['Lost_Payload'].abs()
 
-    # Siapkan Custom Data untuk dimasukkan ke Hover
     if tipe == 'rev':
         hover_data = ['Potential_Revenue', 'Lost_Revenue_Abs', 'Actual_Revenue', 'Availability_Pct', 'Packet_Loss_Pct']
         template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[3]:.2f}%<br>⚠️ Packet Loss: %{customdata[4]:.2f}%<br><br>🌟 Potensi Gain: Rp %{customdata[0]:,.0f}<br>📉 Loss: -Rp %{customdata[1]:,.0f}<br>💰 Aktual: Rp %{customdata[2]:,.0f}<extra></extra>"
@@ -476,10 +480,8 @@ def buat_grafik(df, x_col, y_col, tipe):
         hover_data = ['Availability_Pct', 'Packet_Loss_Pct']
         template = "<b>%{x}</b><br><br>📡 Availability: %{customdata[0]:.2f}%<br>⚠️ Packet Loss: %{customdata[1]:.2f}%<extra></extra>"
     
-    # Render Plotly dengan Custom Hover
     fig = px.line(df_final, x=x_col, y='Plot_Y', color='Site_ID', markers=True, line_shape='spline', custom_data=hover_data)
     
-    # Kustomisasi Garis Agregat agar berbeda dari site lainnya
     for trace in fig.data:
         if trace.name == 'TOTAL AGREGAT AREA':
             trace.line.width = 4
@@ -492,8 +494,6 @@ def buat_grafik(df, x_col, y_col, tipe):
             trace.marker.size = 6
 
     fig.update_traces(hovertemplate=template)
-    
-    # HILANGKAN TEXT X & Y AXIS
     fig.update_layout(
         xaxis_title=None, 
         yaxis_title=None, 
